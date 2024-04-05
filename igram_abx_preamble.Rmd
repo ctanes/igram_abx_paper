@@ -1,0 +1,137 @@
+
+
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(qiimer)
+library(vegan)
+library(ape)
+library(usedist)
+
+## Visualization packages
+library(pander)
+
+library(ggbeeswarm)
+library(viridis)
+library(wesanderson)
+library(pheatbuilder)
+
+# stats packages
+library(adonisplus)
+library(nlme)
+library(emmeans) # for lmer post-hoc tests
+library(broom)
+```
+
+```{r}
+tidy_lmer <- function(lmer_test) {
+  mod <- summary(lmer_test)
+  data.frame(term  = rownames(mod$tTable), mod$tTable, row.names=NULL)
+}
+
+tidy_lmer2 <- function(lmer_test, term_string) {
+  mod <- anova(lmer_test)
+  form_pairwise <- as.formula(paste0("pairwise~", term_string))
+  bind_rows(data.frame(contrast = rownames(mod), mod, row.names=NULL) %>% rename(df=numDF),
+            data.frame(emmeans(lmer_test, list(form_pairwise), adjust="tukey")[[2]])) %>%
+    #mutate(AIC = AIC(lmer_test)) %>%
+    select(contrast, p.value, everything())
+}
+
+theme_clean_pcoa <- function(){ 
+    theme_bw() %+replace%    #replace elements we want to change
+    theme(
+      axis.text=element_blank(),
+      axis.ticks=element_blank(),
+      panel.grid = element_blank(), 
+      aspect.ratio = 1,
+      strip.background = element_blank()
+    )
+}
+theme_clean <- function(){ 
+    theme_bw() %+replace%    #replace elements we want to change
+    theme(
+      panel.grid = element_blank(), 
+      strip.background = element_blank()
+    )
+}
+```
+
+
+```{r}
+### number of samples threshold to show heatmap on the page
+data_dir <- "~/Documents/igram/igram_data"
+
+### mapping file path
+#mapping_file_fp <- file.path(data_dir, "20220511_igram_1to12_metadata_complete.tsv")
+mapping_file_fp <- file.path(data_dir, "20230314_igram_1to12_metadata_complete.tsv")
+
+### preprocess summary results filepath
+preprocess_fp <- file.path(data_dir, "preprocess_1to12.tsv")
+### taxonomic assignment 
+feature_table_fp <- file.path(data_dir, "20211203_kraken_merged_update.txt")
+
+### additional clinical data
+s_abx_ages_fp <- file.path(data_dir, "infant_health_assessment_all_2022_01_12_abxSummary.txt")
+
+### bile acid data
+s_ba_fp <- file.path(data_dir, "metabolite/IGRAM_2017_Stool_TargetedBileAcids.txt")
+```
+
+
+```{r eval=T}
+preprocess <- read.delim(preprocess_fp) %>%
+  mutate(SampleID = sub(".json", "", SampleID))
+
+abx_exposure_levels <- c("no abx", "before 4M", "btw 4M and 12M", "after 12M")
+
+s <- read.delim(mapping_file_fp, sep='\t') %>%
+  mutate(SampleID = as.character(SampleID), SubjectID = as.character(SubjectID)) %>%
+  merge(preprocess, by="SampleID", all.x=T) %>%
+  mutate(isControl = grepl('Extract|Vibrio|EBneg|DNA', SampleID, ignore.case = T)) %>%
+  mutate(Keep = input > 1000000) %>%
+  
+  filter(visit %in% c("4M", "12M", "24M", "SS2_B", "SS2_WK1", "SS2_WK2", "SS2_WK3")) %>%
+  mutate(visit = factor(visit, levels=c("4M", "12M", "24M", "SS2_B", "SS2_WK1", "SS2_WK2", "SS2_WK3"))) %>%
+  
+  mutate(first_abx_exposure = factor(first_abx_exposure, levels=abx_exposure_levels)) %>%
+  
+  mutate(delivery_type = factor(delivery_type)) %>%
+  mutate(delivery_type = fct_relevel(delivery_type, "SVD", after=0)) %>%
+  
+  droplevels()
+
+s_abx_summary <- read.delim(s_abx_ages_fp) %>%
+  filter(SubjectID %in% unique(s$SubjectID))
+
+```
+
+```{r}
+o <- read_qiime_otu_table(feature_table_fp)
+
+# Metadata in the form of truncated green genes assignments
+md <- sub("(; [kpcofgs]__)+$", "", o$metadata, perl=T)
+md <- gsub("[kpcofgs]__", "", md)  
+
+# Assignments data-frame
+adf <- split_assignments(md)
+a <- simplify_assignments(adf, rank1 = "Phylum", rank2="Species")
+
+cts <- o$counts
+colnames(cts) <- sub("\\.taxa$", "", colnames(cts))
+
+is_human <- grepl("Chordata", adf$Phylum)
+adf <- adf[!is_human,]
+a <- a[!is_human]
+cts <- cts[!is_human,]
+
+cts_props <- sweep(cts, 2, colSums(cts), "/")
+summed_cts <- rowsum(cts, a) 
+summed_props <- sweep(summed_cts, 2, colSums(summed_cts), "/")
+
+s <- merge(s, data.frame(otu_counts= colSums(summed_cts)), by.x="SampleID", by.y="row.names", all.x=T)
+```
+
+
+```{r}
+bc <- read_qiime_distmat(file.path(data_dir, "bc_igram_abx.txt"))
+```

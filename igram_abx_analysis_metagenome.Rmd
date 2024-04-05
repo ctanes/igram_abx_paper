@@ -1,0 +1,537 @@
+---
+title: "IGRAM - Metagenomic analysis"
+author: "Ceylan Tanes"
+date: \today
+output: 
+  pdf_document:
+    toc: true
+    toc_depth: 3
+---
+
+```{r knitr setup, echo=FALSE, message=FALSE}
+library(knitr)
+opts_chunk$set(
+  tidy=FALSE,
+  cache=FALSE,
+  echo=FALSE,
+  warning=FALSE,
+  message=FALSE,
+  dpi=100,
+  fig.width=5,
+  fig.height=3,
+  fig.align = "center"
+  )
+```
+
+```{r child = 'igram_abx_preamble.Rmd'}
+```
+
+
+
+
+```{r}
+s <- s %>%
+  filter(visit %in% c("4M", "12M", "24M")) %>%
+  droplevels()
+
+```
+
+
+```{r}
+### protein alignments 
+prot_align_dir <- file.path(data_dir, "sbx_gene_family")
+
+ec_fp <- "~/Documents/DBs/kegg/ec.list"
+ko_ec_fp <- "~/Documents/DBs/kegg/ko_enzyme.list"
+```
+
+```{r}
+read_gene_aln_results <- function(base_dir, s, taxon_info=F) {
+  gene_results <- data_frame(FileName = list.files(
+    base_dir, pattern="*_1.txt")) %>%
+    group_by(FileName) %>%
+    mutate(fileSize = file.info(file.path(base_dir, FileName))$size) %>%
+    ungroup() %>%
+    filter(fileSize > 25) %>% # delete empty files
+    group_by(FileName) %>%
+    do(read.delim(file.path(base_dir, .$FileName), stringsAsFactors = F)) %>%
+    ungroup() %>%
+    mutate(SampleID = sub("_1.txt", "", FileName, perl=T)) %>%
+    select(-FileName) 
+  
+  if (taxon_info) {
+    gene_results %>%
+      right_join(select(s, SampleID), by="SampleID") %>%
+      complete(SampleID, nesting(geneID, taxon), fill = list(count=0)) %>%
+      filter(!is.na(geneID)) 
+  } else {
+    gene_results %>%
+      group_by(SampleID, geneID) %>%
+      summarize(count = sum(count)) %>%
+      ungroup() %>%
+      
+      right_join(select(s, SampleID), by="SampleID") %>%
+      complete(SampleID, geneID, fill = list(count=0)) %>%
+      filter(!is.na(geneID))
+  }
+  
+}
+```
+
+
+```{r eval=F}
+#add in data
+kegg <- read_gene_aln_results(file.path(prot_align_dir, "20190228_kegg_species_prokaryotes"), s, taxon_info=F) %>%
+  group_by(SampleID) %>%
+  mutate(total_kegg = sum(count)) %>%
+  ungroup() %>%
+  mutate(props = count / total_kegg)
+
+kegg_matrix <- pivot_to_numeric_matrix(kegg, SampleID, geneID, props)
+bc_kegg <- vegdist(kegg_matrix)
+write.table(as.matrix(bc_kegg), file=file.path(data_dir,  "bc_kegg_igram_abx.txt"), sep='\t', quote=F, col.names=NA)
+```
+
+
+```{r}
+bc_kegg <- read_qiime_distmat(file.path(data_dir, "bc_kegg_igram_abx.txt"))
+```
+
+
+```{r CARD database}
+card_info <- read.delim("~/Documents/DBs/CARD/card-data/aro_categories_index.tsv", stringsAsFactors = F) %>%
+  #read.delim("/home/tanesc/DBs/card/aro_categories_index.tsv", stringsAsFactors = F) %>%
+  rename(geneID="Protein.Accession", group=AMR.Gene.Family)
+
+card <- read_gene_aln_results(file.path(prot_align_dir, "20190830_protein_fasta_protein_homolog_model"), s, taxon_info=F) %>%
+  group_by(SampleID) %>%
+  mutate(total_gene = sum(count)) %>%
+  ungroup() %>%
+  left_join(select(s, SampleID, nonhost), by="SampleID") %>%
+  mutate(props = count / nonhost) %>%
+  left_join(card_info, by="geneID")
+```
+
+
+# Exposed vs non-exposed at each time point
+
+4M, 12M and 24M samples are included in the analysis. 
+
+```{r}
+s_toTest <- s %>%
+  filter(!is.na(SubjectID)) %>%
+  filter(visit %in% c("4M", "12M", "24M")) %>%
+
+  filter(SampleID != "I2.345.24M") %>% # there are two s345 24M time points. Manually removing one
+  
+  mutate(exposed_abx = dplyr::case_when(visit %in% "4M" ~ abx_4M_any, 
+                                        visit %in% "12M" ~ abx_first_year_any, 
+                                        visit %in% "24M" ~ abx_2Y_any,
+                                        TRUE ~ NA) ) %>%
+  
+  mutate(exposed_abx_amox = dplyr::case_when(visit %in% "4M" ~ abx_4M_any_Amox, 
+                                             visit %in% "12M" ~ abx_first_year_any_Amox, 
+                                             visit %in% "24M" ~ abx_2Y_any_Amox,
+                                             TRUE ~ NA) ) %>%
+  
+  mutate(exposed_abx_nonAmox = dplyr::case_when(visit %in% "4M" ~ abx_4M_any_nonAmox, 
+                                                visit %in% "12M" ~ abx_first_year_any_nonAmox, 
+                                                visit %in% "24M" ~ abx_2Y_any_nonAmox,
+                                                TRUE ~ NA) ) %>%
+  
+  mutate(is_breastfed = feeding_type %in% c("breastmilk", "mixed")) %>%
+  #mutate(is_breastfed = ifelse(is_breastfed, "Breastfed", "No breastfeeding")) %>%
+  
+  mutate(first_abx_exposure = fct_recode(first_abx_exposure, 
+                                         Unexposed = "no abx",
+                                         `Early exposure` = "before 4M",
+                                         `Mid exposure` = "btw 4M and 12M",
+                                         `Late exposure` = "after 12M")) %>%
+  
+  droplevels()
+
+
+s_toTest_expanded <- s_toTest %>%
+  select(SampleID, SubjectID, visit, first_abx_exposure, exposed_abx_amox, exposed_abx_nonAmox, is_breastfed) %>%
+  mutate(comp_exposure_Early_exposure = first_abx_exposure %in% c("Unexposed", "Early exposure")) %>%
+  mutate(comp_exposure_Mid_exposure = first_abx_exposure %in% c("Unexposed", "Mid exposure")) %>%
+  mutate(comp_exposure_Late_exposure = first_abx_exposure %in% c("Unexposed", "Late exposure")) %>% 
+  pivot_longer(cols=starts_with("comp_"), names_to="comparison", values_to="keep") %>% 
+  filter(keep) %>% select(-keep) %>% 
+  mutate(comparison = sub("comp_exposure_", "", comparison)) %>%
+  mutate(comparison = gsub("_", " ", comparison)) 
+
+pander(table(s_toTest$first_abx_exposure, s_toTest$visit))
+
+
+ann_colors = list(
+  first_abx_exposure = factor_palette(s_toTest$first_abx_exposure, viridis(length(levels(s_toTest$first_abx_exposure)), option="plasma", end=0.8) )
+)
+
+```
+
+## KEGG
+
+Reads were aligned to the Kyoto Encyclopedia of Genes and Genomes (downloaded on February 28, 2019) using diamond sequence aligner (PMID:33828273). The resulting protein hits were mapped to KEGG ortholog database. Below is a PCoA plot of Bray-Curtis distances using relative abundances of KEGG orthologs.
+
+## Fig 2C
+
+```{r fig.width=8}
+temp <- s_toTest %>%
+  pcoaplus(bc_kegg) 
+  
+temp_centroids <- temp %>%
+  group_by(first_abx_exposure, visit) %>%
+  summarize(Axis.1 = mean(Axis.1), Axis.2 = mean(Axis.2)) %>%
+  ungroup() %>%
+  mutate(is_breastfed = "zAverage")
+
+temp %>%
+  plot(color=first_abx_exposure, shape=is_breastfed, alpha=0.5) +
+    geom_point(data=temp_centroids, aes(x=Axis.1, y=Axis.2, color=first_abx_exposure, shape=is_breastfed), size=1.5, stroke=1.2) +
+    scale_shape_manual(values=c(16,1,8)) + 
+    facet_wrap(~visit) +
+    scale_color_manual(values=ann_colors$first_abx_exposure) +
+    theme_clean_pcoa() +
+    guides(alpha="none") +
+    labs(color="Abx exposure", shape="Breastfed")
+
+ggsave("igram_abx_Fig2C.pdf", height=3, width=8,useDingbats=F)
+```
+
+For each visit and abx exposure group, compare it to the no abx group.
+distmat ~ is_breastfed + first_abx_exposure
+
+```{r}
+summaries_df <- s_toTest_expanded %>%
+  group_by(visit, comparison) %>%
+  do(adonisplus(., distmat=bc_kegg, formula = distmat ~ is_breastfed + first_abx_exposure, sample_id_var = SampleID, perm=999)) %>%
+  ungroup() %>%
+  filter(!term %in% c("Residuals", "Total")) %>%
+  select(-one_of(c("sumsq", "meansq")))
+
+summaries_df %>%
+  pander(split.table=Inf, digits=2)
+```
+
+distmat ~ is_breastfed * first_abx_exposure
+
+```{r}
+summaries_df <- s_toTest_expanded %>%
+  group_by(visit, comparison) %>%
+  do(adonisplus(., distmat=bc_kegg, formula = distmat ~ is_breastfed * first_abx_exposure, sample_id_var = SampleID, perm=999)) %>%
+  ungroup() %>%
+  filter(!term %in% c("Residuals", "Total")) %>%
+  select(-one_of(c("sumsq", "meansq")))
+
+summaries_df %>%
+  pander(split.table=Inf, digits=2)
+```
+
+
+## Antibiotic resistance genes (CARD)
+
+
+```{r}
+amox_categories <- read.delim(file.path(data_dir, "card_amox_gene_groups_filled.txt"))
+amox_colors <- wes_palette("IsleofDogs1", 4)
+
+card_amox_toTest <- card %>%
+  filter(SampleID %in% s_toTest$SampleID) %>%
+  
+  filter(grepl("penam", Drug.Class)) %>%
+  
+  group_by(SampleID, total_gene, nonhost, group, Resistance.Mechanism) %>%
+  summarize(count = sum(count), props = sum(props)) %>%
+  ungroup() %>%
+  
+  left_join(amox_categories, by="group")
+
+
+
+genes_toTest <- card_amox_toTest  %>%
+  right_join(s_toTest, by="SampleID") %>%
+  filter(first_abx_exposure == "Unexposed") %>%
+  group_by(group) %>%
+  summarize(prevalence = sum(props > 0)/n(), abundance = mean(props)) %>%
+  ungroup() %>%
+  filter(prevalence > 0.5) %>%
+  pull(group) %>%
+  as.character()
+
+
+genes_of_interest <- c("ampC-type beta-lactamase", "major facilitator superfamily (MFS) antibiotic efflux pump;resistance-nodulation-cell division (RND) antibiotic efflux pump", "blaZ beta-lactamase", "OXA beta-lactamase")
+
+```
+
+
+##Fig 4A
+
+```{r}
+temp <- card_amox_toTest  %>%
+  right_join(s_toTest, by="SampleID") %>%
+  filter(first_abx_exposure == "Unexposed") %>%
+  group_by(group, category) %>%
+  summarize(prevalence = sum(props > 0)/n(), abundance = mean(props)) %>%
+  ungroup() %>%
+  mutate(abundance = abundance + min(filter(., abundance>0)$abundance) / 10) 
+
+
+temp %>%
+  ggplot(aes(x=prevalence, y=abundance, color=category)) +
+    geom_vline(xintercept = 0.5, linetype=2) +
+    geom_point() + 
+    scale_y_continuous(trans="log10", labels=c("1e-8%", "1e-6%", "1e-4%","0.01%", "0.1%"), breaks=c(0.0000000001, 0.00000001, 0.000001, 0.0001, 0.001)) +
+    scale_x_continuous(labels=scales:::percent) +
+    scale_color_manual(values=amox_colors) +
+    theme_clean() +
+    theme(
+      aspect.ratio=1
+    ) +
+    #guides(color="none") +
+    labs(
+      x = "Prevalence", color="",
+      y = "Mean relative abundance"
+    )
+ggsave("igram_abx_Fig4A.pdf", height=2.5, width=6, useDingbats=F)
+
+```
+
+```{r}
+temp %>%
+  mutate(prevalent = ifelse(prevalence > 0.5, ">50% prevalence", "<50% prevalence")) %>%
+  mutate(category = fct_rev(factor(category))) %>%
+  ggplot(aes(x=category, fill=prevalent)) +
+    geom_bar() +
+    coord_flip() +
+    scale_fill_manual(values=wes_palette("Royal1", 2)) +
+    theme_clean() +
+    theme(
+      legend.position = "bottom",
+      aspect.ratio = 0.5
+    ) +
+    labs(
+      x="", y="Number of genes"
+    )
+ggsave("igram_abx_Fig4A2.pdf", height=3, width=8, useDingbats=F)
+```
+
+
+```{r}
+card_amox_toTest <- card_amox_toTest %>%
+  
+  filter(group %in% genes_toTest) %>%
+  
+  mutate(props_original = props) %>%
+  mutate(props = props + min(filter(., props>0)$props) / 10) %>%
+  mutate(props_log = log10(props))
+
+card_amox_toTest_expanded <- card_amox_toTest %>%
+  right_join(s_toTest_expanded, by="SampleID")
+
+card_amox_toTest <- card_amox_toTest %>%
+  right_join(s_toTest, by="SampleID")
+```
+
+
+
+Looking at the unexposed group only:
+
+
+Do the genes with >50% prevalence increase with age or differ with breastfeeding?
+
+```{r}
+summaries_df <- card_amox_toTest %>%
+  filter(first_abx_exposure == "Unexposed") %>%
+  
+  group_by(group) %>%
+  do(tidy_lmer2(nlme::lme(props_log ~ is_breastfed + visit, random = ~1|SubjectID, data=., na.action=na.omit), "visit")) %>%
+  ungroup() %>%
+  filter(!grepl("Intercept", contrast)) %>%
+  mutate(contrast = ifelse(is.na(contrast), X1, contrast)) %>%
+  select(group, contrast, df, estimate,SE, p.value) %>%
+  
+  group_by(contrast) %>%
+  mutate(fdr = p.adjust(p.value, method="BH")) %>%
+  ungroup()
+
+
+summaries_df %>%
+  filter(p.value<0.05) %>%
+  pander(split.table=Inf, digits=2)
+
+```
+
+
+
+## Supp Fig 3
+
+```{r fig.width=12, fig.height=12}
+card_amox_toTest %>%
+  filter(first_abx_exposure == "Unexposed") %>%
+  #filter(group %in% (summaries_df %>% filter(fdr<0.1) %>% pull(group) %>% unique() %>% as.character())) %>%
+  mutate(group = gsub(";", "\n", group)) %>%
+  ggplot(aes(x=visit, y=props, color=category)) +
+    geom_boxplot(outlier.alpha = 0) +
+    geom_quasirandom(dodge.width = 0.75, alpha=0.5) +
+    facet_wrap(~group, ncol=4, scales="free_x") +
+    scale_color_manual(values=amox_colors) +
+    scale_y_continuous(trans="log10", labels=c("1e-8%", "1e-6%", "1e-4%","0.01%", "0.1%"), breaks=c(0.0000000001, 0.00000001, 0.000001, 0.0001, 0.001), limits=c(0.000000005, 0.003)) +
+    theme_clean() +
+    theme(
+      legend.position="bottom",
+      aspect.ratio=1
+    ) +
+    labs(
+      x="", color="", 
+      y="Relative abundance"
+    )
+ggsave("igram_abx_SuppFig3_unexposed_ageEffect.pdf", height=20, width=20,useDingbats=F)
+```
+
+## Fig 4B
+
+```{r fig.width=8}
+card_amox_toTest %>%
+  filter(first_abx_exposure == "Unexposed") %>%
+  filter(group %in% genes_of_interest) %>%
+  mutate(group = sub("major facilitator superfamily \\(MFS\\) antibiotic efflux pump;resistance-nodulation-cell division \\(RND\\) antibiotic efflux pump", "MFS and RND abx efflux pump",group)) %>%
+  mutate(group = factor(group)) %>%
+  mutate(group = fct_relevel(group, "blaZ beta-lactamase", after=2)) %>%
+  
+  ggplot(aes(x=visit, y=props, color=category)) +
+    geom_boxplot(outlier.alpha = 0) +
+    geom_quasirandom(dodge.width = 0.75, alpha=0.5) +
+    facet_wrap(~group, ncol=2) +
+    scale_color_manual(values=amox_colors) +
+    scale_y_continuous(trans="log10", labels=c("1e-8%", "1e-6%", "1e-4%","0.01%", "0.1%"), breaks=c(0.0000000001, 0.00000001, 0.000001, 0.0001, 0.001), limits=c(0.000000005, 0.003)) +
+    theme_clean() +
+    theme(
+      #legend.position="bottom",
+      aspect.ratio = 1
+    ) +
+    labs(
+      x="", color="", 
+      y="Relative abundance"
+    )
+ggsave("igram_abx_Fig4B.pdf", height=4, width=6, useDingbats=F)
+```
+
+
+
+Do these genes increase with abx use
+
+
+For each visit: props_log ~ is_breastfed + first_abx_exposure
+In this comparison we are comparing the "first abx exposure" group to the control group with no antibiotics at each time point. 
+
+```{r results = "asis"}
+summaries_df <- card_amox_toTest_expanded %>%
+  
+  group_by(group, visit, comparison) %>%
+  do(tidy(lm(props_log ~ is_breastfed + first_abx_exposure, data=.))) %>%
+  ungroup() %>%
+  filter(!grepl("Intercept", term)) %>%
+  group_by(term, visit, comparison) %>%
+  mutate(fdr = p.adjust(p.value, method="BH")) %>%
+  ungroup() %>%
+  
+  mutate(term = sub("first_abx_exposure", "Unexposed - ", term)) %>%
+  mutate(term = gsub("TRUE", "", term))
+
+summaries_df %>%
+  filter(p.value<0.05) %>%
+  pander(split.table=Inf, digits=2)
+```
+
+
+## Fig 4C
+
+
+```{r fig.width=10, fig.height=8}
+summaries_df %>% 
+  filter(group %in% genes_of_interest) %>%
+  mutate(term = ifelse(grepl("Unexposed", term), "Abx effect", term)) %>%
+  mutate(term = sub("is_breastfed", "Breastfeeding", term)) %>%
+  mutate(term = factor(term)) %>%
+  mutate(term = fct_rev(term)) %>%
+  
+  mutate(group = sub("major facilitator superfamily \\(MFS\\) antibiotic efflux pump;resistance-nodulation-cell division \\(RND\\) antibiotic efflux pump", "MFS and RND abx efflux pump",group)) %>%
+  mutate(group = factor(group)) %>%
+  mutate(group = fct_relevel(group, "blaZ beta-lactamase", after=2)) %>%
+  
+  mutate(comparison = sub(" exposure", "", comparison)) %>%
+  mutate(comparison = factor(comparison, levels=c("Late", "Mid", "Early"))) %>%
+  
+  mutate(significance = case_when(
+    fdr < 0.001 ~ "***",
+    fdr < 0.01 ~ "**",
+    fdr < 0.05 ~ "*",
+  )) %>%
+  mutate(sig_color = ifelse(abs(estimate) > 0.8, "A", "B")) %>%
+  
+  ggplot(aes(x=visit, y=comparison, fill=estimate)) +
+    geom_tile() +
+    geom_text(aes(label=significance, color=sig_color), size=5) +
+    facet_grid(term ~ group) +
+    scale_fill_gradient2(low="#053061", mid="#F7F7F7", high="#67001F", midpoint=0) +
+    scale_color_manual(values=c("#D3D3D3", "#000000")) +
+    theme_clean() +
+    theme(
+      strip.text.x = element_text(angle = 90, vjust = 0.5, hjust=0),
+      aspect.ratio=1
+    ) +
+  guides(color="none") +
+    labs(
+      y="Antibiotics exposure", fill="Log10\nestimated\nmean\ndifference",
+      x="Age"
+    )
+
+ggsave("igram_abx_Fig4C_card_penam_diffAb.pdf", height=5, width=6, useDingbats=F)
+
+
+```
+
+
+## Supp Fig 4
+
+```{r fig.width=15, fig.height=8}
+summaries_df %>% 
+  mutate(term = ifelse(grepl("Unexposed", term), "Abx effect", term)) %>%
+  mutate(term = sub("is_breastfed", "Breastfeeding", term)) %>%
+  mutate(term = factor(term)) %>%
+  mutate(term = fct_rev(term)) %>%
+  
+  mutate(group = gsub(";", "\n", group)) %>%
+  
+  mutate(comparison = sub(" exposure", "", comparison)) %>%
+  mutate(comparison = factor(comparison, levels=c("Late", "Mid", "Early"))) %>%
+  
+  mutate(significance = case_when(
+    fdr < 0.001 ~ "***",
+    fdr < 0.01 ~ "**",
+    fdr < 0.05 ~ "*"
+  )) %>%
+  mutate(sig_color = ifelse(abs(estimate) > 0.8, "A", "B")) %>%
+  
+  ggplot(aes(x=visit, y=comparison, fill=estimate)) +
+    geom_tile() +
+    geom_text(aes(label=significance, color=sig_color), size=5) +
+    facet_grid(term ~ group) +
+    scale_fill_gradient2(low="#053061", mid="#F7F7F7", high="#67001F", midpoint=0) +
+    scale_color_manual(values=c("#D3D3D3", "#000000")) +
+    theme_clean() +
+    theme(
+      strip.text.x = element_text(angle = 90, vjust = 0.5, hjust=0),
+      aspect.ratio=1
+    ) +
+  guides(color="none") +
+    labs(
+      y="Antibiotics exposure", fill="Log10\nestimated\nmean\ndifference",
+      x="Age"
+    )
+ggsave("igram_abx_SuppFig4_card_penam_diffAb.pdf", height=8, width=14, useDingbats=F)
+
+
+```
+

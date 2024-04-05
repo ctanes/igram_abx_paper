@@ -1,0 +1,951 @@
+---
+title: "IGRAM - Substudy 2 compositional analysis"
+author: "Ceylan Tanes - CHOP Microbiome Center"
+date: \today
+output: 
+  pdf_document:
+    toc: true
+    toc_depth: 3
+---
+
+```{r setup, echo=FALSE}
+knitr::opts_chunk$set(
+  tidy=FALSE,
+  cache=FALSE,
+  echo=FALSE,
+  warning=FALSE,
+  message=FALSE,
+  dpi=100,
+  fig.width=6,
+  fig.height=4,
+  fig.align = "center"
+  )
+```
+
+```{r child = 'igram_abx_preamble.Rmd'}
+```
+
+# Introduction
+
+This analysis contains the IGRAM Abx substudy 2 samples. This study follows the gut microbiome of patients after they take antibiotics. The baseline stool is collected within two days of taking antibiotics. The consecutive visits are 4-11 days after the previous visit. The last time point must also be within 10 days of taking the last dose of antibiotics.
+
+# Taxnomic analysis
+
+
+## Overview of the subjects
+
+```{r}
+### Remove s155 because the subject took intramuscular amoxicillin and doesn't go through the gut
+
+
+s_abx_summary_SS2 <- s_abx_summary %>%
+  filter(grepl("SS2", visit)) %>%
+  filter(!grepl("s155", SubjectID)) %>%
+  filter(!(SubjectID == "s136" & abx_name == "Amoxicillin")) %>% # This is not the most recent abx
+  droplevels()
+
+
+s_toTest <- s %>%
+  filter(!isControl) %>%
+  filter(Keep) %>%
+  filter(grepl("SS2", visit)) %>%
+  filter(!grepl("s155", SubjectID)) %>% # this was a muscle injection of amox so it's removed
+  
+  mutate(study_day = fct_recode(visit, V1="SS2_B", V2="SS2_WK1", V3="SS2_WK2", V4="SS2_WK3")) %>%
+  mutate(study_day_consec = study_day) %>%
+  
+  mutate(had_amox = grepl("Amoxicillin|Amoxicillin-Clavulanate", current_abx)) %>%
+  mutate(had_other = grepl(s_abx_summary_SS2 %>% filter(!grepl("Amoxicillin|Amoxicillin-Clavulanate", abx_name)) %>% pull(abx_name) %>% unique() %>% paste(collapse="|"), current_abx)) %>%
+  
+  mutate(on_abx = ifelse(on_abx, "On abx", "Off abx")) %>%
+  mutate(had_other = ifelse(had_other, "Other abx", "No other abx")) %>%
+  mutate(had_amox = ifelse(had_amox, "Amox", "No amox")) %>%
+  mutate(had_amox = fct_rev(factor(had_amox))) %>%
+  
+  mutate(is_breastfed = ifelse(is_breastfed, "BF", "no BF")) %>%
+  mutate(is_breastfed = fct_rev(factor(is_breastfed))) %>%
+  
+  droplevels()
+
+
+baseline_ages <- s_toTest %>%
+  filter(visit == "SS2_B") %>%
+  select(SubjectID, baseline_age=age_at_visit) %>%
+  rbind(data.frame(SubjectID="s340", baseline_age=21.716633))
+
+
+abx_starts <- s_abx_summary_SS2 %>%
+  arrange(abx_age) %>%
+  group_by(SubjectID) %>%
+  slice(1) %>%
+  ungroup() %>%
+  select(SubjectID, abx_starts = abx_age)
+
+s_toTest <- s_toTest %>%  
+  left_join(baseline_ages, by="SubjectID") %>%
+  left_join(abx_starts, by="SubjectID")
+
+
+ann_colors = list(
+  study_day = factor_palette(s_toTest$study_day, viridis(length(levels(s_toTest$study_day)), option="viridis", end=0.75) )
+)
+
+
+pander(table(s_toTest$study_day, s_toTest$is_breastfed), caption="How many babies are getting breastfed at each time point")
+
+```
+
+```{r eval=F}
+## mini demographic data
+s %>%
+  filter(SubjectID %in% unique(s_toTest$SubjectID)) %>% 
+  select(SubjectID, sex_of_baby) %>%
+  filter(!is.na(sex_of_baby)) %>%
+  unique() %>%
+  group_by(SubjectID) %>%
+  #slice(1) %>%
+  ungroup() %>%
+  pull(sex_of_baby) %>%
+  table()
+
+temp <- s_toTest%>%
+  filter(study_day == "V1") %>%
+  pull(age_at_visit)
+mean(temp) 
+sd(temp)
+
+s %>%
+  filter(SubjectID %in% unique(s_toTest$SubjectID)) %>% 
+  select(SubjectID, igram_group) %>%
+  filter(!is.na(igram_group)) %>%
+  unique() %>%
+  group_by(SubjectID) %>%
+  #slice(1) %>%
+  ungroup() %>%
+  pull(igram_group) %>%
+  table()
+
+s %>%
+  filter(SubjectID %in% unique(s_toTest$SubjectID)) %>% 
+  select(SubjectID, delivery_type) %>%
+  filter(!is.na(delivery_type)) %>%
+  unique() %>%
+  group_by(SubjectID) %>%
+  #slice(1) %>%
+  ungroup() %>%
+  pull(delivery_type) %>%
+  table()
+
+
+```
+
+
+
+## Fig 1C
+
+
+
+```{r  fig.height=5, fig.width=6}
+abx_intervals <- s_abx_summary_SS2 %>%
+  left_join(abx_starts, by="SubjectID") %>%
+  mutate(age_since_V1 = abx_age - abx_starts) %>%
+  
+  mutate(age_since_V1 = age_since_V1 * 30) %>%
+  
+  select(SubjectID, abx_name, event, age_since_V1) %>%
+  pivot_wider(names_from = "event", values_from = "age_since_V1") %>%
+  
+  mutate(diff = end - start) %>%
+  mutate(end = ifelse(diff==0, end + 1, end)) %>%
+  
+  mutate(abx_name = fct_other(abx_name, keep = c("Amoxicillin","Amoxicillin-Clavulanate"))) %>%
+  mutate(abx_name = fct_collapse(abx_name, `Amoxicillin` = c("Amoxicillin", "Amoxicillin-Clavulanate"))) %>%
+  
+  mutate(SubjectID = factor(SubjectID)) %>%
+  mutate(SubjectID_numeric = as.numeric(SubjectID))
+
+
+s_toTest %>%
+  mutate(SubjectID = factor(SubjectID, levels=levels(abx_intervals$SubjectID))) %>%
+  mutate(SubjectID_numeric = as.numeric(SubjectID)) %>%
+  
+  mutate(age_since_V1 = (age_at_visit - abx_starts)*30) %>%
+  ggplot(aes(x=age_since_V1, y=SubjectID_numeric, color=study_day)) +
+    geom_rect(data=abx_intervals, aes(xmin=start, fill=abx_name, xmax=end, ymin=SubjectID_numeric-0.4, ymax=SubjectID_numeric+0.4), alpha=0.5, inherit.aes = F) +
+    geom_point(size=1.75) +
+    scale_color_manual(values=ann_colors$study_day) +
+    scale_fill_brewer(palette="Set1") +
+    scale_y_continuous(breaks=seq(1,39,1), expand=c(0,0)) +
+    scale_x_continuous(breaks = seq(0,45,5), expand=c(0.03,0.03)) +
+    theme_clean() +
+    theme(
+      axis.text.y = element_blank(),
+      axis.ticks.y = element_blank()
+    ) +
+    labs(
+      x="Days since first antibiotics dose",
+      y="Subjects in longitudinal substudy", fill="Abx name", color="Time point"
+    )
+
+ggsave("igram_abx_Fig1C_SS2_abxOverview.pdf", height = 4, width=4, useDingbats=F)
+
+```
+
+
+## Differential abundance
+
+
+Figure shows all the bacteria that have a mean relative abundance of >1% across samples. Only these bacteria have been tested in this report.
+
+
+```{r}
+props_toTest <- summed_props %>%
+  as.data.frame() %>% 
+  rownames_to_column("Taxa") %>% 
+  pivot_longer(-Taxa, names_to="SampleID", values_to="props") %>%
+  right_join(s_toTest, by="SampleID")  %>%
+  group_by(Taxa) %>%
+  mutate(perc_present = mean(props > 0)) %>%
+  mutate(mean_prop = mean(props)) %>%
+  ungroup() %>%
+  filter(mean_prop > 0.01) %>%
+  filter(Taxa != "Bacteria") %>%
+  filter(!grepl("phage", Taxa)) %>%
+  
+  mutate(props_original = props) %>%
+  mutate(props = props + min(filter(., props>0)$props) / 10) %>%
+  mutate(props_log = log10(props))
+  
+```
+
+
+\newpage
+
+Linear mixed effects models were used to estimate mean difference between visits. Logit transformed relative abundances were used as the outcome variable. Only the results with p<0.05 are shown, the results with fdr<0.05 are bolded.
+
+
+props_log ~ is_breastfed + baseline_age + study_day, random=~1|SubjectID
+
+
+```{r}
+summaries_df <- props_toTest %>%
+  
+  group_by(Taxa) %>%
+  do(tidy_lmer(nlme::lme(props_log ~ is_breastfed + baseline_age + study_day, random=~1|SubjectID, data=., na.action=na.omit))) %>%
+  ungroup() %>%
+  filter(!grepl("Intercept", term)) %>%
+  group_by(term) %>%
+  mutate(fdr = p.adjust(p.value, method="BH")) %>%
+  ungroup() %>%
+  
+  mutate(term = sub("is_breastfedBF", "Breastfeeding", term)) %>%
+  mutate(term = sub("baseline_age", "Baseline age", term)) %>%
+  mutate(term = sub("study_day", "V1 - ", term))
+```
+
+
+## Fig 3C
+
+```{r fig.height=3, fig.width=6}
+props_toTest %>%
+  
+  filter(Taxa %in% c("Actinobacteria Bifidobacterium bifidum", "Firmicutes Faecalibacterium prausnitzii", "Proteobacteria Klebsiella pneumoniae")) %>%
+  droplevels() %>%
+  mutate(Taxa = fct_relabel(Taxa, function(x) gsub("Actinobacteria |Firmicutes |Proteobacteria ", "", x))) %>%
+  
+  ggplot(aes(x=study_day, y=props, color=study_day)) +
+    geom_boxplot(outlier.alpha=0) +
+    geom_quasirandom(aes(shape=is_breastfed)) +
+    facet_wrap(~Taxa, ncol = 4) +
+    scale_color_manual(values=ann_colors$study_day) +
+    #scale_color_viridis(end=0.9) +
+    scale_shape_manual(values=c(16,1)) +
+    scale_y_continuous(labels=scales:::percent, trans="log10", limits = c(0.000001, 2), breaks = c(0.00001, 0.001, 0.01, 0.1, 1)) +
+    theme_clean() +
+    theme(
+      legend.position = "bottom",
+      aspect.ratio = 1.2
+    ) +
+    guides(color=F) +
+    labs(
+      x="Time point", color="Abx", shape="Breastfeeding",
+      y="Relative abundance"
+    )
+
+ggsave("igram_abx_Fig3C_SS2_timeEffect.pdf", height=4, width=7, useDingbats=F)
+```
+
+## Fig 3B
+
+```{r fig.height=3, fig.width=6}
+props_toTest %>%
+  
+  filter(Taxa %in% c("Actinobacteria Bifidobacterium bifidum", "Firmicutes Faecalibacterium prausnitzii", "Proteobacteria Klebsiella pneumoniae")) %>%
+  droplevels() %>%
+  mutate(Taxa = fct_relabel(Taxa, function(x) gsub("Actinobacteria |Firmicutes |Proteobacteria ", "", x))) %>%
+  
+  ggplot(aes(x=baseline_age, y=props)) +
+    geom_point(aes(color=study_day, shape=is_breastfed)) +
+    geom_smooth(method="lm", color="black") +
+    facet_wrap(~Taxa, ncol = 4) +
+    scale_color_manual(values=ann_colors$study_day) +
+    #scale_color_viridis(end=0.9) +
+    scale_shape_manual(values=c(16,1)) +
+    scale_y_continuous(labels=scales:::percent, trans="log10", limits = c(0.000001, 2), breaks = c(0.00001, 0.001, 0.01, 0.1, 1)) +
+    theme_clean() +
+    theme(
+      legend.position = "bottom",
+      aspect.ratio = 1.2
+    ) +
+    guides(color=F) +
+    labs(
+      x="Baseline age (months)", shape="Breastfeeding",
+      y="Relative abundance"
+    )
+
+ggsave("igram_abx_Fig3B_SS2_ageEffect.pdf", height=4, width=7, useDingbats=F)
+```
+
+## Supp Fig 2
+
+```{r fig.height=6, fig.width=8}
+summaries_df %>%
+  mutate(term = sub("baseline_age", "Baseline age", term)) %>%
+  mutate(term = fct_rev(factor(term))) %>%
+  
+  mutate(toSep = ifelse(grepl("V1", term), "Time point effect", "Covariates")) %>%
+  #mutate(toSep = fct_rev(factor(toSep))) %>%
+
+  mutate(isSig = ifelse(fdr < 0.05, "q<0.05", "q>0.05")) %>%
+  
+  ggplot(aes(x=Value, y=Taxa, color=term, shape=isSig)) +
+    geom_vline(xintercept=0, linetype=2) +
+    geom_pointrange(aes(xmin=Value-Std.Error, xmax=Value+Std.Error), position = position_dodge(width = 0.4)) +
+    #geom_text(aes(x=7, label=p_label), vjust=0.76, hjust=1, color="black") +
+    facet_wrap(~toSep) +
+    scale_color_manual(values=c(rev(as.character(ann_colors$study_day[-1])), as.character(wes_palette("GrandBudapest1"))[2], as.character(wes_palette("Royal1"))[1])) +
+    scale_shape_manual(values=c(16,1)) +
+    theme_clean() +
+    guides(colour = guide_legend(reverse=T)) +
+    labs(
+      x="Estimated log difference between groups",
+      y="", color="", shape=""
+    )
+
+ggsave("igram_abx_SuppFig2_SS2_diffAb_all.pdf", height=6, width=9, useDingbats=F)
+```
+
+
+## Beta diversity
+
+
+
+
+Individual tests on each variable
+
+```{r}
+summaries_df <- rbind(
+  adonisplus(s_toTest, distmat = bc, formula = distmat ~ is_breastfed, 
+             sample_id_var = SampleID, rep_meas_var = SubjectID, 
+             shuffle = c(is_breastfed = "between"), permutations=999),
+  adonisplus(s_toTest, distmat = bc, formula = distmat ~ baseline_age, 
+             sample_id_var = SampleID, rep_meas_var = SubjectID, 
+             shuffle = c(baseline_age = "between"), permutations=999),
+  adonisplus(s_toTest, distmat = bc, formula = distmat ~ study_day, 
+             sample_id_var = SampleID, rep_meas_var = SubjectID, 
+             shuffle = c(study_day = "within"), permutations=999),
+  adonisplus(s_toTest, distmat = bc, formula = distmat ~ SubjectID, 
+             sample_id_var = SampleID, permutations=999)
+  ) %>%
+  filter(!term %in% c("Residual", "Total")) %>%
+  select(-one_of(c("sumsq", "meansq")))
+
+summaries_df %>%
+  select(term, r.squared, p.value) %>%
+  arrange(-r.squared) %>%
+  pander(split.table=Inf, digits=2)
+
+```
+
+Post-hoc tests for the visit
+
+adonispost(s_toTest, distmat = bc, formula = distmat ~ study_day, 
+             sample_id_var = SampleID, rep_meas_var = SubjectID,  which = study_day, alpha=1,
+             shuffle = c(study_day = "within"), permutations=999)
+
+```{r}
+adonispost(s_toTest, distmat = bc, formula = distmat ~ study_day, 
+             sample_id_var = SampleID, rep_meas_var = SubjectID,  which = study_day, alpha=1,
+             shuffle = c(study_day = "within"), permutations=999) %>%
+  pander(split.table=Inf, digits=2)
+```
+
+
+```{r}
+adonisplus(s_toTest, distmat = bc, formula = distmat ~ SubjectID + study_day, 
+             sample_id_var = SampleID, rep_meas_var = SubjectID, 
+             shuffle = c(study_day = "within"), permutations=999) %>%
+  pander(split.table=Inf, digits=2)
+
+
+adonisplus(s_toTest, distmat = bc, formula = distmat ~ SubjectID + study_day, 
+             sample_id_var = SampleID, permutations=999) %>%
+  pander(split.table=Inf, digits=2)
+
+
+```
+
+
+Combined adonis test with covariates
+
+adonisplus(s_toTest, distmat = bc, formula = distmat ~ is_breastfed + baseline_age + study_day, 
+             sample_id_var = SampleID, rep_meas_var = SubjectID, 
+             shuffle = c(study_day = "within", baseline_age = "between", is_breastfed = "between"), permutations=999)
+             
+```{r}
+adonisplus(s_toTest, distmat = bc, formula = distmat ~ is_breastfed + baseline_age + study_day, 
+           sample_id_var = SampleID, rep_meas_var = SubjectID, 
+           shuffle = c(study_day = "within", baseline_age = "between", is_breastfed = "between"), permutations=999) %>%
+  pander(split.table=Inf, digits=2)
+```
+
+
+
+
+## Fig 3A
+
+```{r}
+percentages <- s_toTest %>%
+  pcoaplus(bc) %>%
+  attr("axislabel") %>% 
+  as.character() 
+
+R2_label <- paste0("italic(R^2) == ", summaries_df %>% filter(term == "SubjectID") %>% pull(r.squared) %>% signif(2))
+p_label <- paste0("italic(P) == ", summaries_df %>% filter(term == "SubjectID") %>% pull(p.value) %>% signif(2))
+
+s_toTest %>%
+  pcoaplus(bc) %>%
+  ggplot(aes(x=Axis.1, y=Axis.2, group=SubjectID, fill=SubjectID)) +
+    geom_point() +
+    annotate("text", x=-0.35, y=0.5, label=R2_label, parse=T) +
+    annotate("text", x=-0.35, y=0.4, label=p_label, parse=T) +
+    stat_ellipse(geom="polygon", alpha=0.2, level=0.5) +
+    geom_line() +
+  
+    scale_x_continuous(limits=c(-0.5, 0.55)) +
+    scale_y_continuous(limits=c(-0.45, 0.5)) +
+  
+    theme_clean_pcoa() + 
+    guides(fill="none") +
+    labs(x=percentages[[1]],
+         y=percentages[[2]],
+         color="Value", shape="")
+
+ggsave("igram_abx_Fig3A_SS2_Subject.pdf", height=3, width=5, useDingbats=F)
+```
+
+```{r}
+R2_label <- paste0("italic(R^2) == ", summaries_df %>% filter(term == "is_breastfed") %>% pull(r.squared) %>% signif(2))
+p_label <-  paste0("italic(P) == ", summaries_df %>% filter(term == "is_breastfed") %>% pull(p.value) %>% signif(2))
+
+s_toTest %>%
+  pcoaplus(bc) %>%
+  plot(shape=is_breastfed) +
+    annotate("text", x=-0.35, y=0.5, label=R2_label, parse=T) +
+    annotate("text", x=-0.35, y=0.4, label=p_label, parse=T) +
+    scale_shape_manual(values=c(16,1)) + 
+    theme_clean_pcoa() +
+    scale_x_continuous(limits=c(-0.5, 0.55)) +
+    scale_y_continuous(limits=c(-0.45, 0.5)) +
+    labs(shape="Breastfeeding")
+ggsave("igram_abx_Fig3A_SS2_Breastfeeding.pdf", height=3, width=5, useDingbats=F)
+```
+
+```{r}
+R2_label <- paste0("italic(R^2) == ", summaries_df %>% filter(term == "baseline_age") %>% pull(r.squared) %>% signif(2))
+p_label <-  paste0("italic(P) == ", summaries_df %>% filter(term == "baseline_age") %>% pull(p.value) %>% signif(2))
+
+s_toTest %>%
+  pcoaplus(bc) %>%
+  plot(color=baseline_age) +
+    annotate("text", x=-0.35, y=0.5, label=R2_label, parse=T) +
+    annotate("text", x=-0.35, y=0.4, label=p_label, parse=T) +
+    scale_shape_manual(values=c(16,1)) + 
+    scale_color_viridis(option="mako", end=0.8) +
+    theme_clean_pcoa() +
+    scale_x_continuous(limits=c(-0.5, 0.55)) +
+    scale_y_continuous(limits=c(-0.45, 0.5)) +
+    labs(color="Baseline\nage\n(months)")
+ggsave("igram_abx_Fig3A_SS2_BaselineAge.pdf", height=3, width=5, useDingbats=F)
+```
+
+```{r}
+R2_label <- paste0("italic(R^2) == ", summaries_df %>% filter(term == "study_day") %>% pull(r.squared) %>% signif(2))
+p_label <-  paste0("italic(P) == ", summaries_df %>% filter(term == "study_day") %>% pull(p.value) %>% signif(2))
+
+temp <- s_toTest %>%
+  mutate(forShape = "A") %>%
+  pcoaplus(bc) 
+
+temp_centroids <- temp %>%
+  group_by(study_day) %>%
+  summarize(Axis.1 = mean(Axis.1), Axis.2 = mean(Axis.2)) %>%
+  ungroup() %>%
+  mutate(forShape = "B")
+
+temp %>%
+  plot(color=study_day, shape=forShape, alpha=1) +
+    geom_point(data=temp_centroids, aes(x=Axis.1, y=Axis.2, color=study_day, shape=forShape), size=1.5, stroke=1.2) +
+    annotate("text", x=-0.35, y=0.5, label=R2_label, parse=T) +
+    annotate("text", x=-0.35, y=0.4, label=p_label, parse=T) +
+    scale_shape_manual(values=c(16,8)) + 
+    scale_color_manual(values=ann_colors$study_day) +
+    scale_alpha_continuous(range=c(0.7,0.7)) +
+    theme_clean_pcoa() +
+    scale_x_continuous(limits=c(-0.5, 0.55)) +
+    scale_y_continuous(limits=c(-0.45, 0.5)) +
+    labs(color="Time point")
+ggsave("igram_abx_Fig3A_SS2_Visit.pdf", height=3, width=5, useDingbats=F)
+```
+
+
+
+
+
+
+# Metagenomic analysis
+
+```{r}
+read_gene_aln_results <- function(base_dir, s, taxon_info=F) {
+  gene_results <- data_frame(FileName = list.files(
+    base_dir, pattern="*_1.txt")) %>%
+    group_by(FileName) %>%
+    mutate(fileSize = file.info(file.path(base_dir, FileName))$size) %>%
+    ungroup() %>%
+    filter(fileSize > 25) %>% # delete empty files
+    group_by(FileName) %>%
+    do(read.delim(file.path(base_dir, .$FileName), stringsAsFactors = F)) %>%
+    ungroup() %>%
+    mutate(SampleID = sub("_1.txt", "", FileName, perl=T)) %>%
+    select(-FileName) 
+  
+  if (taxon_info) {
+    gene_results %>%
+      right_join(select(s, SampleID), by="SampleID") %>%
+      complete(SampleID, nesting(geneID, taxon), fill = list(count=0)) %>%
+      filter(!is.na(geneID)) 
+  } else {
+    gene_results %>%
+      group_by(SampleID, geneID) %>%
+      summarize(count = sum(count)) %>%
+      ungroup() %>%
+      
+      right_join(select(s, SampleID), by="SampleID") %>%
+      complete(SampleID, geneID, fill = list(count=0)) %>%
+      filter(!is.na(geneID))
+  }
+  
+}
+```
+
+
+```{r CARD database}
+card_info <- read.delim("/Users/tanesc/Documents/DBs/CARD/card-data/aro_categories_index.tsv", stringsAsFactors = F) %>%
+  #read.delim("/home/tanesc/DBs/card/aro_categories_index.tsv", stringsAsFactors = F) %>%
+  rename(geneID="Protein.Accession", group=AMR.Gene.Family)
+
+card <- read_gene_aln_results(file.path(data_dir, "igram8_abxSubstudy/sbx_gene_family", "20190830_protein_fasta_protein_homolog_model"), s_toTest, taxon_info=F) %>%
+  group_by(SampleID) %>%
+  mutate(total_gene = sum(count)) %>%
+  ungroup() %>%
+  left_join(select(s_toTest, SampleID, nonhost), by="SampleID") %>%
+  mutate(props = count / nonhost) %>%
+  left_join(card_info, by="geneID")
+```
+
+
+## CARD: Penam resistance genes (Includes amoxicillin)
+
+```{r}
+amox_categories <- read.delim(file.path(data_dir, "card_amox_gene_groups_filled.txt"))
+amox_colors <- wes_palette("IsleofDogs1", 4)
+
+card_toTest <- card %>%
+  filter(SampleID %in% s_toTest$SampleID)
+
+card_amox_toTest <- card_toTest %>%
+  filter(grepl("penam", Drug.Class)) %>%
+  
+  group_by(SampleID, total_gene, nonhost, group, Resistance.Mechanism) %>%
+  summarize(count = sum(count), props = sum(props)) %>%
+  ungroup() %>%
+  
+  # filter out the low abundance genes
+  group_by(group) %>%
+  mutate(perc_present = sum(props > 0)/n()) %>%
+  mutate(mean_prop = mean(props)) %>%
+  ungroup() %>%
+  filter(perc_present > 0.5) %>%
+  
+  mutate(props_original = props) %>%
+  mutate(props = props + min(filter(., props>0)$props) / 10) %>%
+  mutate(props_log = log10(props))
+
+
+card_amox_toTest <- card_amox_toTest %>%
+  right_join(s_toTest, by="SampleID") %>%
+  left_join(amox_categories, by="group")
+
+genes_of_interest <- c("ampC-type beta-lactamase", "major facilitator superfamily (MFS) antibiotic efflux pump;resistance-nodulation-cell division (RND) antibiotic efflux pump", "blaZ beta-lactamase", "OXA beta-lactamase")
+
+```
+
+
+```{r}
+summaries_df <- card_amox_toTest %>%
+  
+  group_by(group) %>%
+  do(tidy_lmer(nlme::lme(props_log ~ is_breastfed + baseline_age + study_day, random=~1|SubjectID, data=., na.action=na.omit))) %>%
+  ungroup() %>%
+  filter(!grepl("Intercept", term)) %>%
+  group_by(term) %>%
+  mutate(fdr = p.adjust(p.value, method="BH")) %>%
+  ungroup() %>%
+  
+  mutate(term = sub("is_breastfedBF", "Breastfeeding", term)) %>%
+  mutate(term = sub("on_abx", "", term))
+```
+
+
+## Fig 4E
+
+```{r  fig.width=8}
+card_amox_toTest %>%
+  
+  filter(group %in% genes_of_interest) %>%
+  mutate(group = sub("major facilitator superfamily \\(MFS\\) antibiotic efflux pump;resistance-nodulation-cell division \\(RND\\) antibiotic efflux pump", "MFS and RND abx efflux pump",group)) %>%
+  mutate(group = factor(group)) %>%
+  mutate(group = fct_relevel(group, "blaZ beta-lactamase", after=2)) %>%
+  
+  ggplot(aes(x=study_day, y=props, color=study_day)) +
+    geom_boxplot(outlier.alpha=0) +
+    geom_smooth(method="lm", color="black", aes(group=1)) +
+    geom_quasirandom(dodge.width = 0.75) +
+    facet_wrap(~group, ncol = 4) +
+    scale_color_manual(values=ann_colors$study_day) +
+    #scale_color_viridis(end=0.9) +
+    scale_shape_manual(values=c(16,1)) +
+    scale_y_continuous(trans="log10", labels=c("1e-8%", "1e-6%", "1e-4%","0.01%", "0.1%"), breaks=c(0.0000000001, 0.00000001, 0.000001, 0.0001, 0.001), limits=c(0.000000005, 0.003)) +
+    theme_clean() +
+    theme(
+      legend.position = "bottom",
+      aspect.ratio = 1
+    ) +
+    guides(color="none") +
+    labs(
+      x="Time point", shape="Breastfeeding",
+      y="Relative abundance"
+    )
+ggsave("igram_abx_Fig4E.pdf", height=2.2, width=9, useDingbats=F)
+```
+
+
+## SuppFig5
+
+```{r  fig.width=8}
+card_amox_toTest %>%
+  mutate(group = gsub(";", "\n", group)) %>%
+  mutate(group = factor(group)) %>%
+
+  ggplot(aes(x=study_day, y=props, color=study_day)) +
+    geom_boxplot(outlier.alpha=0) +
+    geom_smooth(method="lm", color="black", aes(group=1)) +
+    geom_quasirandom(dodge.width = 0.75) +
+    facet_wrap(~group, ncol = 4) +
+    scale_color_manual(values=ann_colors$study_day) +
+    scale_shape_manual(values=c(16,1)) +
+    scale_y_continuous(trans="log10", labels=c("1e-8%", "1e-6%", "1e-4%","0.01%", "0.1%"), breaks=c(0.0000000001, 0.00000001, 0.000001, 0.0001, 0.001), limits=c(0.000000005, 0.003)) +
+    theme_clean() +
+    theme(
+      legend.position = "bottom"
+    ) +
+    #guides(color="none") +
+    labs(
+      x="Visit", color="Baseline\nage", shape="Breastfeeding",
+      y="Relative abundance"
+    )
+ggsave("igram_abx_SuppFig5_card_penam_SS2.pdf", height=20, width=20, useDingbats=F)
+```
+
+
+
+## Fig 4D
+
+```{r}
+card_amox_toTest %>%
+  rename(gene=group) %>%
+  group_by(gene, category) %>%
+  do(data.frame(MuMIn::r.squaredGLMM(nlme::lme(props_log ~ is_breastfed + baseline_age + study_day, random=~1|SubjectID, data=., na.action=na.omit)))) %>%
+  ungroup() %>%
+  mutate(R2r = R2c - R2m) %>%
+  select(-R2c) %>%
+  pivot_longer(cols = c("R2m", "R2r"), names_to = "effect_name", values_to="r2") %>%
+  mutate(effect_name = fct_rev(factor(effect_name))) %>%
+  mutate(effect_name = fct_recode(effect_name, `Random effect:\ninter-subject`="R2r", `Fixed effect:\nbreastfeeding,\nbaseline age,\ntime point`="R2m")) %>%
+  
+  group_by(effect_name) %>%
+  mutate(mean_effect = mean(r2), std_effect = sd(r2)) %>%
+  ungroup() %>%
+  
+  ggplot(aes(x=effect_name, y=r2)) +
+    geom_pointrange(aes(y=mean_effect, ymin=mean_effect-std_effect, ymax=mean_effect+std_effect), size=1, color="gray70") +
+    geom_point(aes(color=category)) +
+    geom_line(aes(group=gene, color=category)) +
+    scale_color_manual(values=amox_colors) +
+    theme_clean() +
+    theme(
+      legend.position="bottom",
+      aspect.ratio=0.8
+    ) +
+    guides(color="none") +
+    labs(
+      x="", y="Effect size"
+    )
+
+ggsave("igram_abx_Fig4D.pdf", height=2.5, width=6, useDingbats=F)
+```
+
+
+
+
+# Metabolomic analysis
+
+
+
+```{r}
+## read in the bile acid data for SS2
+
+ba_ss2 <- read.delim(file.path(data_dir, "metabolite", "BileAcids_SS2_IGRAM_March2021.txt")) %>%
+  mutate(study_day = case_when(Time.Point == "V11 S2-1" ~ "V1",
+                               Time.Point == "V12 S2-2" ~ "V2",
+                               Time.Point == "V13 S2-3" ~ "V3",
+                               Time.Point == "V14 S2-4" ~ "V4",
+                               T ~ "")) %>%
+  select(-Time.Point) %>%
+  rename(SubjectID = Subject.ID) %>%
+  mutate(SubjectID = sub("-2", "", SubjectID)) %>%
+  mutate(SubjectID = paste0("s", SubjectID)) %>%
+  
+  gather("Abbreviation", "BA_levels", -SubjectID, -study_day) %>%
+  
+  mutate(BA_levels = ifelse(is.na(BA_levels), 0, BA_levels)) %>%
+  mutate(values_log = log10(BA_levels + 0.1)) %>%
+
+  left_join(read.delim("/Users/tanesc/Documents/DBs/bile_acid/Bile_acid_structure_v2.tsv"), by="Abbreviation") %>%
+  
+  mutate(Keep = bile_acid %in% c("glycocholate", "taurocholate",
+                                 "glycochenodeoxycholate", "taurochenodeoxycholate",
+                                 "chenodeoxycholate", "cholate",
+                                 "lithocholate", "deoxycholate")) %>%
+  
+  filter(SubjectID %in% s_toTest$SubjectID) ## Make sure we are using the same subjects
+
+ba_ss2_summed <- ba_ss2 %>%
+  filter(Keep) %>%
+  group_by(SubjectID, study_day, Status, bsh_product) %>%
+  summarize(BA_levels = sum(BA_levels)) %>%
+  ungroup() %>%
+  mutate(values_log = log10(BA_levels + 0.1)) %>%
+  
+  mutate(bsh_product = ifelse(bsh_product, "Unconjugated", "Conjugated")) %>%
+  mutate(ba_group = interaction(Status, bsh_product, sep=" ")) %>%
+  filter(ba_group != "Secondary Conjugated") %>% # There is not much secondary conjugated ba since the microbiome is more or less mature
+  
+  droplevels()
+
+
+ratio1 <- ba_ss2_summed %>%
+  group_by(SubjectID, study_day, Status) %>%
+  summarize(BA_levels = sum(BA_levels)) %>%
+  mutate(BA_levels = BA_levels + 0.1) %>%
+  pivot_wider(names_from=Status, values_from=BA_levels) %>%
+  mutate(secondary_primary_ratio = Secondary / Primary) %>%
+  mutate(secondary_primary_ratio_log = log10(secondary_primary_ratio)) %>%
+  select(SubjectID, study_day, secondary_primary_ratio, secondary_primary_ratio_log)
+
+ratio2 <- ba_ss2_summed %>%
+  group_by(SubjectID, study_day, bsh_product) %>%
+  summarize(BA_levels = sum(BA_levels)) %>%
+  mutate(BA_levels = BA_levels + 0.1) %>%
+  pivot_wider(names_from=bsh_product, values_from=BA_levels) %>% 
+  mutate(unconjugated_conjugated_ratio = Unconjugated / Conjugated) %>%
+  mutate(unconjugated_conjugated_ratio_log = log10(unconjugated_conjugated_ratio)) %>%
+  select(SubjectID, study_day, unconjugated_conjugated_ratio, unconjugated_conjugated_ratio_log)
+
+s_toTest <- s_toTest %>%
+  left_join(ratio1, by=c("SubjectID", "study_day")) %>%
+  left_join(ratio2, by=c("SubjectID", "study_day"))
+
+#rm(ratio1, ratio2)
+```
+
+
+## Differential abundance: Individual bile acids
+
+Linear models were used to esimate the difference in log metabolite levels across study groups. Only the metabolites that are present in 50% of the samples are tested. The terms with p<0.05 are shown in the table below. 
+
+### Fig5A
+
+```{r}
+ba_ss2 %>%
+  filter(Keep) %>%
+  filter(study_day == "V1") %>%
+  left_join(baseline_ages, by="SubjectID") %>%
+  mutate(bsh_product = ifelse(bsh_product, "Unconjugated", "Conjugated")) %>%
+  mutate(ba_group = interaction(Status, bsh_product, sep=" ")) %>%
+  filter(ba_group != "Secondary Conjugated") %>%
+  mutate(ba_group = sub(" ", "\n", ba_group)) %>%
+  
+  mutate(Abbreviation = fct_collapse(Abbreviation, `G/TCA`=c("GCA", "TCA"), `G/TCDCA`=c("GCDCA", "TCDCA"))) %>%
+  group_by(Abbreviation, ba_group, SubjectID, study_day, baseline_age) %>%
+  summarize(BA_levels = sum(BA_levels)) %>%
+  ungroup() %>%
+  
+  mutate(BA_levels = BA_levels + 0.1) %>%
+  ggplot(aes(x=Abbreviation, y=BA_levels)) +
+    geom_boxplot(outlier.alpha = 0) +
+    geom_quasirandom(aes(color=study_day)) +
+    scale_color_manual(values=ann_colors$study_day) +
+    facet_wrap(~ba_group, scales="free_x") +
+    scale_y_continuous(trans="log10", breaks=c(0.1, 1, 10, 100, 1000), labels=c("0", "1", "10", "100", "1000")) +
+    theme_clean() +
+    theme(
+      #legend.position = "bottom"#,
+      #aspect.ratio = 1.2
+    ) +
+    guides(color="none") +
+    labs(
+      x="", y="Bile acid levels (nmol/g stool)", color="Visit"
+    )
+ggsave("igram_abx_Fig5A_ba_overview.pdf", height=3, width=4.5, useDingbats=F)
+```
+
+
+```{r}
+ba_ss2 %>%
+  filter(Keep) %>%
+  filter(study_day == "V1") %>%
+  left_join(baseline_ages, by="SubjectID") %>%
+  mutate(bsh_product = ifelse(bsh_product, "Unconjugated", "Conjugated")) %>%
+  mutate(ba_group = interaction(Status, bsh_product, sep=" ")) %>%
+  filter(ba_group != "Secondary Conjugated") %>%
+  
+  mutate(Abbreviation = fct_collapse(Abbreviation, `G/TCA`=c("GCA", "TCA"), `G/TCDCA`=c("GCDCA", "TCDCA"))) %>%
+  #group_by(Abbreviation, ba_group, SubjectID, study_day, baseline_age) %>%
+  group_by(Abbreviation, ba_group, SubjectID) %>%
+  summarize(BA_levels = sum(BA_levels), present = BA_levels > 0) %>%
+  ungroup() %>%
+  
+  group_by(Abbreviation, ba_group) %>%
+  summarize(present = sum(present)/n(), absent = 1-present) %>%
+  ungroup() %>%
+  #pivot_longer(cols=c("present", "absent"), names_to="Present", values_to="perc_present") %>%
+  
+  mutate(ba_group = sub(" ", "\n", ba_group)) %>%
+  
+  ggplot(aes(x=Abbreviation, y=present)) +
+    geom_bar(stat="identity", fill=ann_colors$study_day[1]) +
+    #coord_flip() +
+    facet_wrap(~ba_group, scales="free_x") +
+    scale_fill_manual(values=ann_colors$study_day[1]) +
+    scale_y_continuous(labels=scales:::percent) +
+    theme_clean() +
+    theme(
+      #legend.position = "bottom",
+      #strip.text.y = element_text(angle = 0)
+    ) +
+    guides(fill = guide_legend(reverse=TRUE)) +
+    labs(
+      y="Percent of T1 samples",
+      x="", fill=""
+    )
+
+ggsave("igram_abx_Fig5A_ba_overview2.pdf", height=3, width=4.5, useDingbats=F)
+```
+
+
+## Testing the ratios
+
+```{r}
+summaries_df <- s_toTest %>%
+  select(SubjectID, study_day, baseline_age, is_breastfed, secondary_primary_ratio, unconjugated_conjugated_ratio) %>%
+  pivot_longer(cols=c("secondary_primary_ratio", "unconjugated_conjugated_ratio"), names_to = "ratio_name", values_to = "ratio") %>%
+  group_by(ratio_name) %>%
+  do(tidy_lmer(nlme::lme(log10(ratio) ~ is_breastfed + baseline_age + study_day, random=~1|SubjectID, data=., na.action=na.omit))) %>%
+  ungroup() %>%
+  
+  filter(!grepl("Intercept|Residuals", term)) %>%
+  mutate(term = sub("study_day", "V1 - ", term)) 
+
+summaries_df %>%
+  pander(split.table=Inf, digits=2)
+```
+
+### Fig5B
+
+```{r}
+s_toTest %>%
+  select(SubjectID, study_day, baseline_age, is_breastfed, secondary_primary_ratio, unconjugated_conjugated_ratio) %>%
+  pivot_longer(cols=c("secondary_primary_ratio", "unconjugated_conjugated_ratio"), names_to = "ratio_name", values_to = "ratio") %>%
+  mutate(ratio_name = sub("secondary_primary_ratio", "Secondary / Primary", ratio_name)) %>%
+  mutate(ratio_name = sub("unconjugated_conjugated_ratio", "Unconjugated / Conjugated", ratio_name)) %>%
+  ggplot(aes(x=baseline_age, y=ratio)) +
+    geom_point(aes(color=study_day, shape=is_breastfed)) +
+    geom_smooth(method="lm", color="black") +
+    facet_wrap(~ratio_name) +
+    scale_color_manual(values=ann_colors$study_day) +
+    scale_shape_manual(values=c(16,1)) +
+    scale_y_continuous(trans="log10") +
+    theme_clean() +
+    theme(
+      legend.position = "bottom",
+      #aspect.ratio = 1.2
+    ) +
+    guides(color="none", shape="none") +
+    labs(
+      x="Baseline age", color="Abx", shape="Breastfeeding",
+      y="Log10 ratio of bile acids"
+    )
+
+ggsave("igram_abx_Fig5B_BAratios_baselineAge.pdf", height=3, width=4.5, useDingbats=F)
+```
+
+
+
+```{r}
+s_toTest %>%
+  select(SubjectID, study_day, baseline_age, is_breastfed, secondary_primary_ratio, unconjugated_conjugated_ratio) %>%
+  pivot_longer(cols=c("secondary_primary_ratio", "unconjugated_conjugated_ratio"), names_to = "ratio_name", values_to = "ratio") %>%
+  mutate(ratio_name = sub("secondary_primary_ratio", "Secondary / Primary", ratio_name)) %>%
+  mutate(ratio_name = sub("unconjugated_conjugated_ratio", "Unconjugated / Conjugated", ratio_name)) %>%
+  ggplot(aes(x=study_day, y=ratio, color=study_day)) +
+    geom_boxplot(outlier.alpha = 0) +
+    geom_quasirandom(aes(shape=is_breastfed)) +
+    facet_wrap(~ratio_name) +
+    scale_color_manual(values=ann_colors$study_day) +
+    scale_shape_manual(values=c(16,1)) +
+    scale_y_continuous(trans="log10") +
+    theme_clean() +
+    theme(
+      legend.position = "bottom",
+      #aspect.ratio = 1.2
+    ) +
+    guides(color="none", shape="none") +
+    labs(
+      x="Time point", color="Abx", shape="Breastfeeding",
+      y="Log10 ratio of bile acids"
+    )
+
+ggsave("igram_abx_Fig5B_BAratios_timePoint.pdf", height=3, width=4.5, useDingbats=F)
+```
+

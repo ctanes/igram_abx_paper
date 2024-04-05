@@ -1,0 +1,874 @@
+---
+title: "IGRAM"
+author: "Ceylan Tanes - CHOP Microbiome Center"
+date: \today
+output: 
+  pdf_document:
+    toc: true
+    toc_depth: 3
+---
+
+```{r setup, echo=FALSE}
+knitr::opts_chunk$set(
+  tidy=FALSE,
+  cache=FALSE,
+  echo=FALSE,
+  warning=FALSE,
+  message=FALSE,
+  dpi=100,
+  fig.width=6,
+  fig.height=4,
+  fig.align = "center"
+  )
+```
+
+```{r child = 'igram_abx_preamble.Rmd'}
+```
+
+```{r}
+s <- s %>%
+  filter(visit %in% c("4M", "12M", "24M")) %>%
+  droplevels()
+```
+
+
+## Fig 1B
+
+```{r}
+s_abx_summary %>%
+  group_by(SubjectID, visit, abx_name) %>%
+  slice(1) %>%
+  ungroup() %>%
+  filter(!visit %in% c("SS2_B", "SS2_WK1", "SS2_WK2", "SS2_WK3")) %>%
+  
+  mutate(abx_grouped = fct_lump(abx_name, n=9)) %>%
+  mutate(abx_grouped = fct_collapse(abx_grouped, Other = c("Other", "unknown antibiotic", "Unknown antibiotic"))) %>%
+  
+  mutate(for_color = ifelse(abx_grouped %in% c("Amoxicillin", "Amoxicillin-Clavulanate"), "Amox", "Other")) %>%
+  
+  group_by(abx_grouped) %>%
+  mutate(sample_size = n()) %>%
+  ungroup() %>%
+  mutate(abx_grouped = paste0(abx_grouped, " (", sample_size, ")")) %>%
+  
+  mutate(abx_grouped = fct_relevel(abx_grouped, "Other (45)", after=Inf)) %>%
+  
+  ggplot(aes(x=abx_age, fill=for_color)) +
+    geom_histogram() +
+    geom_vline(xintercept=4, linetype=2) +
+    geom_vline(xintercept=12, linetype=2) +
+    geom_vline(xintercept=24, linetype=2) +
+    facet_wrap(~abx_grouped) +
+    scale_x_continuous(breaks=seq(0,24,4)) +
+    scale_fill_brewer(palette="Set1") +
+    theme_bw() +
+    theme(
+      panel.grid = element_blank(),
+      strip.background = element_blank()
+    ) + 
+    guides(fill="none") +
+    labs(
+      x = "Age (months)",
+      y = "Number of antibiotics prescriptions"
+    )
+ggsave("igram_abx_Fig1B_abxSummary.pdf", height=4, width=5.5, useDingbats=F)
+```
+
+
+# Exposed vs non-exposed at each time point
+
+4M, 12M and 24M samples are included in the analysis. 
+
+```{r}
+s_toTest <- s %>%
+  filter(!is.na(SubjectID)) %>%
+  filter(visit %in% c("4M", "12M", "24M")) %>%
+  
+  filter(SampleID != "I2.345.24M") %>% # there are two s345 24M time points. Manually removing one
+
+  mutate(exposed_abx = dplyr::case_when(visit %in% "4M" ~ abx_4M_any, 
+                                        visit %in% "12M" ~ abx_first_year_any, 
+                                        visit %in% "24M" ~ abx_2Y_any,
+                                        TRUE ~ NA) ) %>%
+  
+  mutate(exposed_abx_amox = dplyr::case_when(visit %in% "4M" ~ abx_4M_any_Amox, 
+                                             visit %in% "12M" ~ abx_first_year_any_Amox, 
+                                             visit %in% "24M" ~ abx_2Y_any_Amox,
+                                             TRUE ~ NA) ) %>%
+  
+  mutate(exposed_abx_nonAmox = dplyr::case_when(visit %in% "4M" ~ abx_4M_any_nonAmox, 
+                                                visit %in% "12M" ~ abx_first_year_any_nonAmox, 
+                                                visit %in% "24M" ~ abx_2Y_any_nonAmox,
+                                                TRUE ~ NA) ) %>%
+  
+  mutate(is_breastfed = feeding_type %in% c("breastmilk", "mixed")) %>%
+  #mutate(is_breastfed = ifelse(is_breastfed, "Breastfed", "No breastfeeding")) %>%
+  
+  mutate(first_abx_exposure = fct_recode(first_abx_exposure, 
+                                         Unexposed = "no abx",
+                                         `Early exposure` = "before 4M",
+                                         `Mid exposure` = "btw 4M and 12M",
+                                         `Late exposure` = "after 12M")) %>%
+  
+  mutate(delivery_type = fct_collapse(delivery_type, `C-section`=c("C-Section with labor", "C-Section without labor"))) %>%
+  
+  droplevels()
+  
+  
+s_toTest_expanded <- s_toTest %>%
+  select(SampleID, SubjectID, visit, first_abx_exposure, exposed_abx_amox, exposed_abx_nonAmox, is_breastfed, delivery_type, gest_age, intrapartum_antibiotics) %>%
+  mutate(comp_exposure_Early_exposure = first_abx_exposure %in% c("Unexposed", "Early exposure")) %>%
+  mutate(comp_exposure_Mid_exposure = first_abx_exposure %in% c("Unexposed", "Mid exposure")) %>%
+  mutate(comp_exposure_Late_exposure = first_abx_exposure %in% c("Unexposed", "Late exposure")) %>% 
+  pivot_longer(cols=starts_with("comp_"), names_to="comparison", values_to="keep") %>% 
+  filter(keep) %>% select(-keep) %>% 
+  mutate(comparison = sub("comp_exposure_", "", comparison)) %>%
+  mutate(comparison = gsub("_", " ", comparison)) 
+
+pander(table(s_toTest$first_abx_exposure, s_toTest$visit))
+
+s_toTest %>%
+  select(SubjectID, first_abx_exposure) %>%
+  unique() %>%
+  pull(first_abx_exposure) %>%
+  table()
+
+ann_colors = list(
+  first_abx_exposure = factor_palette(s_toTest$first_abx_exposure, viridis(length(levels(s_toTest$first_abx_exposure)), option="plasma", end=0.8) )
+)
+
+```
+
+```{r}
+addmargins(table(s_toTest$visit, s_toTest$is_breastfed, useNA = "ifany")) %>%
+  pander(split.table=Inf)
+```
+
+
+```{r}
+abx_stats <- s_abx_summary %>% 
+  filter(SubjectID %in% s_toTest$SubjectID) %>%
+  
+  group_by(SubjectID, visit, abx_name) %>%
+  slice(1) %>%
+  ungroup() %>%
+  
+  group_by(SubjectID) %>%
+  summarize(num_abx = n()) %>%
+  ungroup() %>%
+  
+  mutate(is_multiple = num_abx > 1) 
+
+abx_stats %>% pull(is_multiple) %>% mean()
+abx_stats %>% pull(num_abx) %>% mean()
+abx_stats %>% pull(num_abx) %>% sd()
+```
+
+
+```{r}
+s_abx_summary %>% 
+  filter(SubjectID %in% s_toTest$SubjectID) %>%
+  left_join(s_toTest %>% select(SubjectID, first_abx_exposure) %>% unique(), by="SubjectID") %>%
+  
+  group_by(SubjectID, visit, abx_name, first_abx_exposure) %>%
+  slice(1) %>%
+  ungroup() %>%
+  
+  group_by(SubjectID, first_abx_exposure) %>%
+  summarize(num_abx = n()) %>%
+  ungroup() %>%
+  
+  group_by(first_abx_exposure) %>%
+  summarize(mean_abx = mean(num_abx), sd_abx = sd(num_abx)) %>%
+  ungroup() %>%
+  
+  pander(split.table=Inf, digits=2)
+```
+
+## Fig2A
+
+```{r}
+s_toTest %>%
+  mutate(divide = ifelse(first_abx_exposure == "Unexposed", "Control", "Exposed samples")) %>%
+  mutate(divide = factor(divide)) %>%
+  #mutate(divide = fct_rev(divide)) %>%
+  mutate(relevant = ifelse(first_abx_exposure == "Early exposure" | 
+           (first_abx_exposure == "Mid exposure" & visit %in% c("12M", "24M")) |
+           (first_abx_exposure == "Late exposure" & visit %in% c("24M")),
+           "C", "B")) %>%
+  mutate(relevant = ifelse(first_abx_exposure=="Unexposed", "A", relevant)) %>%
+  group_by(first_abx_exposure, visit, divide, relevant, is_breastfed) %>%
+  summarize(num_breastfed = n()) %>%
+  ungroup() %>%
+  
+  group_by(first_abx_exposure, visit, divide, relevant) %>%
+  mutate(num_samples = sum(num_breastfed)) %>%
+  ungroup() %>%
+  
+  filter(is_breastfed) %>%
+  mutate(perc_breastfed = round(num_breastfed / num_samples * 100, digits=0)) %>%
+  
+  mutate(num_samples_text = paste0(num_samples, "\n(", perc_breastfed, "%)")) %>%
+  
+  mutate(first_abx_exposure = fct_relabel(first_abx_exposure, function(x) sub(" exposure", "", x))) %>% 
+  mutate(first_abx_exposure = fct_rev(first_abx_exposure)) %>%
+  
+  ggplot(aes(x=visit, y=first_abx_exposure, fill=relevant)) +
+    geom_tile(height=0.95, width=0.95) +
+    geom_text(aes(label=num_samples_text), size=4) +
+    facet_grid(divide~., space = "free", scale = "free") +
+    #scale_fill_manual(values = c("#FFFFFF", as.character(wes_palette("Royal1", 2, type="discrete")))) +
+    #scale_fill_manual(values = c("#FFFFFF", "#B9BAA3", "#A22c29")) +
+    scale_fill_manual(values = c("#FFFFFF", "#B8B2AC", "#FC8268")) +
+    theme_clean() +
+    scale_y_discrete(expand = c(0,0)) +
+    scale_x_discrete(expand = c(0,0)) +
+    theme(
+      #panel.border = element_blank(),
+      axis.ticks = element_blank()#,
+      #aspect.ratio = 1
+    ) +
+    #coord_equal() +
+    guides(fill = "none") +
+    labs(
+      y="Antibiotics exposure", x="Age"
+    )
+    
+ggsave("igram_abx_Fig2A_overview.pdf", height=3, width=3.5, useDingbats=F)
+```
+
+Fisher's exact test on counts of exposed vs unexposed subjects who are breastfed or not breastfed.
+
+```{r}
+## check if unexposed subjects are more likely to be breastfed
+s_toTest %>%
+  
+  group_by(visit, exposed_abx, is_breastfed) %>%
+  summarize(num_breastfed = n()) %>%
+  ungroup() %>%
+  
+  group_by(visit) %>%
+  do(tidy(fisher.test(matrix(.$num_breastfed, nrow=2)))) %>%
+  ungroup() %>%
+  
+  select(-method) %>%
+  
+  pander(split.table=Inf, digits=2)
+```
+
+
+## Differential abundance
+
+
+```{r}
+props_toTest <- summed_props[,s_toTest$SampleID] %>%
+  as.data.frame() %>% 
+  rownames_to_column("Taxa") %>% 
+  pivot_longer(-Taxa, names_to="SampleID", values_to="props") %>%
+  #right_join(s_toTest, by="SampleID")  %>%
+  group_by(Taxa) %>%
+  mutate(perc_present = sum(props > 0)/n()) %>%
+  mutate(mean_prop = mean(props)) %>%
+  ungroup() %>%
+  filter(mean_prop > 0.015) %>%
+  filter(Taxa != "Bacteria") %>%
+  filter(!grepl("phage", Taxa)) %>%
+  
+  mutate(props_original = props) %>%
+  mutate(props = props + min(filter(., props>0)$props) / 10) %>%
+  mutate(props_log = log10(props))
+
+props_toTest_expanded <- props_toTest %>%
+  right_join(s_toTest_expanded, by="SampleID")
+
+props_toTest <- props_toTest %>%
+  right_join(s_toTest, by="SampleID")
+```
+
+## Supp table 2
+
+For each visit: props_log ~ is_breastfed + first_abx_exposure
+In this comparison we are comparing the "first abx exposure" group to the control group with no antibiotics at each time point. 
+
+```{r}
+summaries_df <- props_toTest_expanded %>%
+  
+  group_by(Taxa, visit, comparison) %>%
+  do(tidy(lm(props_log ~ is_breastfed + first_abx_exposure, data=.))) %>%
+  ungroup() %>%
+  filter(!grepl("Intercept", term)) %>%
+  #mutate(term = sub("study_day", "BL - ", term)) %>%
+  group_by(term, visit, comparison) %>%
+  mutate(fdr = p.adjust(p.value, method="BH")) %>%
+  ungroup() %>%
+  
+  mutate(term = sub("first_abx_exposure", "Unexposed - ", term)) %>%
+  mutate(term = gsub("TRUE", "", term))
+
+write.table(summaries_df, "igram_abx_SuppTable2.txt", row.names=F, quote=F, sep='\t')
+```
+
+
+## Fig 2D
+
+```{r fig.width=14, fig.height=8}
+taxa_of_interest <- props_toTest %>%
+  select(Taxa, mean_prop) %>%
+  unique() %>%
+  arrange(-mean_prop) %>%
+  separate(Taxa, remove = F, into=c("Phylum", "Species"), extra="merge") %>%
+  group_by(Phylum) %>%
+  slice(1:3) %>%
+  ungroup() %>%
+  filter(!Taxa %in% "Proteobacteria Enterobacteriaceae") %>%
+  mutate(Phylum = ifelse(Phylum %in% c("Proteobacteria", "Verrucomicrobia"), "Proteobacteria and\nVerrucomicrobia", Phylum)) %>%
+  select(Taxa, Phylum)
+
+summaries_df %>% 
+  right_join(taxa_of_interest, by="Taxa") %>%
+  mutate(term = ifelse(grepl("Unexposed", term), "Abx effect", term)) %>%
+  mutate(term = sub("is_breastfed", "Breastfeeding", term)) %>%
+  mutate(term = factor(term)) %>%
+  mutate(term = fct_rev(term)) %>%
+  
+  mutate(Taxa = gsub(" ", "\n", Taxa)) %>%
+  
+  mutate(comparison = sub(" exposure", "", comparison)) %>%
+  mutate(comparison = factor(comparison, levels=c("Late", "Mid", "Early"))) %>%
+  
+  mutate(significance = case_when(
+    fdr < 0.001 ~ "***",
+    fdr < 0.01 ~ "**",
+    fdr < 0.05 ~ "*",
+    fdr < 0.1 ~ "+"
+  )) %>%
+  mutate(sig_color = ifelse(abs(estimate) > 0.8, "A", "B")) %>%
+  
+  ggplot(aes(x=visit, y=comparison, fill=estimate)) +
+    geom_tile() +
+    geom_text(aes(label=significance, color=sig_color), size=5) +
+    facet_grid(term ~ Taxa) +
+    scale_fill_gradient2(low="#053061", mid="#F7F7F7", high="#67001F", midpoint=0) +
+    scale_color_manual(values=c("#D3D3D3", "#000000")) +
+    theme_clean() +
+    theme(
+      #axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+      aspect.ratio=1
+    ) +
+    guides(color="none") +
+    labs(
+      y="Antibiotics exposure", fill="Log10\nestimated\nmean\ndifference",
+      x="Age"
+    )
+ggsave("igram_abx_Fig2D_diffAb.pdf", height=4, width=14, useDingbats=F)
+```
+
+
+
+For each visit: props_log ~ is_breastfed * first_abx_exposure
+In this comparison we are comparing the "first abx exposure" group to the control group with no antibiotics at each time point. 
+
+```{r}
+summaries_df <- props_toTest_expanded %>%
+  
+  group_by(Taxa, visit, comparison) %>%
+  do(tidy(lm(props_log ~ is_breastfed * first_abx_exposure, data=.))) %>%
+  ungroup() %>%
+  filter(!grepl("Intercept", term)) %>%
+  group_by(term, visit, comparison) %>%
+  mutate(fdr = p.adjust(p.value, method="BH")) %>%
+  ungroup() %>%
+  
+  mutate(term = sub("first_abx_exposure", "Unexposed - ", term)) %>%
+  mutate(term = gsub("TRUE", "", term))
+```
+
+## Supp Fig1
+
+```{r fig.width=14, fig.height=8}
+summaries_df %>% 
+  right_join(taxa_of_interest, by="Taxa") %>%
+  mutate(term = ifelse(grepl(":", term), "Interaction", term)) %>%
+  mutate(term = ifelse(grepl("Unexposed", term), "Abx effect", term)) %>%
+  mutate(term = sub("is_breastfed", "Breastfeeding", term)) %>%
+  mutate(term = factor(term)) %>%
+  
+  mutate(Taxa = gsub(" ", "\n", Taxa)) %>%
+  
+  mutate(comparison = sub(" exposure", "", comparison)) %>%
+  mutate(comparison = factor(comparison, levels=c("Late", "Mid", "Early"))) %>%
+  
+  mutate(significance = case_when(
+    fdr < 0.001 ~ "***",
+    fdr < 0.01 ~ "**",
+    fdr < 0.05 ~ "*",
+    fdr < 0.1 ~ "+"
+  )) %>%
+  mutate(sig_color = ifelse(abs(estimate) > 1, "A", "B")) %>%
+  
+  ggplot(aes(x=visit, y=comparison, fill=estimate)) +
+    geom_tile() +
+    geom_text(aes(label=significance, color=sig_color), size=5) +
+    facet_grid(term ~ Taxa) +
+    scale_fill_gradient2(low="#053061", mid="#F7F7F7", high="#67001F", midpoint=0) +
+    scale_color_manual(values=c("#D3D3D3", "#000000")) +
+    theme_clean() +
+    theme(
+      #axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+      aspect.ratio=1
+    ) +
+    labs(
+      y="Antibiotics exposure", fill="Log10\nestimated\nmean\ndifference",
+      x="Age"
+    )
+ggsave("igram_abx_SuppFig1_subsample_BF_abx_interaction.pdf", height=4, width=14, useDingbats=F)
+```
+
+
+For each visit, comparison and intrapartum abx status: props_log ~ is_breastfed + first_abx_exposure
+
+```{r}
+summaries_df <- props_toTest_expanded %>%
+  filter(intrapartum_antibiotics %in% c("Yes", "No")) %>%
+  
+  group_by(Taxa, visit, comparison, intrapartum_antibiotics) %>%
+  do(tidy(lm(props_log ~ is_breastfed + first_abx_exposure, data=.))) %>%
+  ungroup() %>%
+  filter(!grepl("Intercept", term)) %>%
+  group_by(term, visit, comparison, intrapartum_antibiotics) %>%
+  mutate(fdr = p.adjust(p.value, method="BH")) %>%
+  ungroup() %>%
+  
+  mutate(term = sub("first_abx_exposure", "Unexposed - ", term)) %>%
+  mutate(term = gsub("TRUE", "", term))
+```
+
+
+```{r fig.width=14, fig.height=8}
+summaries_df %>% 
+  right_join(taxa_of_interest, by="Taxa") %>%
+  mutate(term = ifelse(grepl(":", term), "Interaction", term)) %>%
+  mutate(term = ifelse(grepl("Unexposed", term), "Abx effect", term)) %>%
+  mutate(term = sub("is_breastfed", "Breastfeeding", term)) %>%
+  mutate(term = factor(term)) %>%
+  mutate(term = fct_rev(term)) %>%
+  
+  mutate(Taxa = gsub(" ", "\n", Taxa)) %>%
+  
+  mutate(comparison = sub(" exposure", "", comparison)) %>%
+  mutate(comparison = factor(comparison, levels=c("Late", "Mid", "Early"))) %>%
+  
+  mutate(significance = case_when(
+    fdr < 0.001 ~ "***",
+    fdr < 0.01 ~ "**",
+    fdr < 0.05 ~ "*",
+    fdr < 0.1 ~ "+"
+  )) %>%
+  mutate(sig_color = ifelse(abs(estimate) > 1, "A", "B")) %>%
+  
+  ggplot(aes(x=visit, y=comparison, fill=estimate)) +
+    geom_tile() +
+    geom_text(aes(label=significance, color=sig_color), size=5) +
+    facet_grid(term + intrapartum_antibiotics ~ Taxa) +
+    scale_fill_gradient2(low="#053061", mid="#F7F7F7", high="#67001F", midpoint=0) +
+    scale_color_manual(values=c("#D3D3D3", "#000000")) +
+    theme_clean() +
+    theme(
+      #axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+      aspect.ratio=1
+    ) +
+    guides(color="none") +
+    labs(
+      y="Antibiotics exposure", fill="Log10\nestimated\nmean\ndifference",
+      x="Age"
+    )
+ggsave("igram_abx_SuppFig1_subsample_intrapartum_abx.pdf", height=6, width=14, useDingbats=F)
+```
+
+
+For each visit, comparison and delivery type: props_log ~ is_breastfed + first_abx_exposure
+
+```{r}
+summaries_df <- props_toTest_expanded %>%
+  filter(!is.na(delivery_type)) %>%
+  
+  group_by(Taxa, visit, comparison, delivery_type) %>%
+  do(tidy(lm(props_log ~ is_breastfed + first_abx_exposure, data=.))) %>%
+  ungroup() %>%
+  filter(!grepl("Intercept", term)) %>%
+  group_by(term, visit, comparison, delivery_type) %>%
+  mutate(fdr = p.adjust(p.value, method="BH")) %>%
+  ungroup() %>%
+  
+  mutate(term = sub("first_abx_exposure", "Unexposed - ", term)) %>%
+  mutate(term = gsub("TRUE", "", term))
+```
+
+
+```{r fig.width=14, fig.height=8}
+summaries_df %>% 
+  right_join(taxa_of_interest, by="Taxa") %>%
+  mutate(term = ifelse(grepl(":", term), "Interaction", term)) %>%
+  mutate(term = ifelse(grepl("Unexposed", term), "Abx effect", term)) %>%
+  mutate(term = sub("is_breastfed", "Breastfeeding", term)) %>%
+  mutate(term = factor(term)) %>%
+  mutate(term = fct_rev(term)) %>%
+  
+  mutate(Taxa = gsub(" ", "\n", Taxa)) %>%
+  
+  mutate(comparison = sub(" exposure", "", comparison)) %>%
+  mutate(comparison = factor(comparison, levels=c("Late", "Mid", "Early"))) %>%
+  
+  mutate(significance = case_when(
+    fdr < 0.001 ~ "***",
+    fdr < 0.01 ~ "**",
+    fdr < 0.05 ~ "*",
+    fdr < 0.1 ~ "+"
+  )) %>%
+  mutate(sig_color = ifelse(abs(estimate) > 0.8, "A", "B")) %>%
+  
+  ggplot(aes(x=visit, y=comparison, fill=estimate)) +
+    geom_tile() +
+    geom_text(aes(label=significance, color=sig_color), size=5) +
+    facet_grid(term + delivery_type ~ Taxa) +
+    scale_fill_gradient2(low="#053061", mid="#F7F7F7", high="#67001F", midpoint=0) +
+    scale_color_manual(values=c("#D3D3D3", "#000000")) +
+    theme_clean() +
+    theme(
+      #axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+      aspect.ratio=1
+    ) +
+    guides(color="none") +
+    labs(
+      y="Antibiotics exposure", fill="Log10\nestimated\nmean\ndifference",
+      x="Age"
+    )
+ggsave("igram_abx_SuppFig1_subsample_delivery_type.pdf", height=6, width=14, useDingbats=F)
+```
+
+
+For each visit, comparison: props_log ~ gestational_age + is_breastfed + first_abx_exposure
+
+
+```{r}
+summaries_df <- props_toTest_expanded %>%
+  filter(!is.na(gest_age)) %>%
+  mutate(gest_age = gest_age / 7) %>%
+  
+  group_by(Taxa, visit, comparison) %>%
+  do(tidy(lm(props_log ~ gest_age + is_breastfed + first_abx_exposure, data=.))) %>%
+  ungroup() %>%
+  filter(!grepl("Intercept", term)) %>%
+  group_by(term, visit, comparison) %>%
+  mutate(fdr = p.adjust(p.value, method="BH")) %>%
+  ungroup() %>%
+  
+  mutate(term = sub("first_abx_exposure", "Unexposed - ", term)) %>%
+  mutate(term = gsub("TRUE", "", term))
+
+```
+
+```{r fig.width=14, fig.height=8}
+summaries_df %>% 
+  right_join(taxa_of_interest, by="Taxa") %>%
+  mutate(term = ifelse(grepl(":", term), "Interaction", term)) %>%
+  mutate(term = ifelse(grepl("Unexposed", term), "Abx effect", term)) %>%
+  mutate(term = sub("is_breastfed", "Breastfeeding", term)) %>%
+  mutate(term = sub("gest_age", "Gestational age", term)) %>%
+  
+  mutate(term = factor(term)) %>%
+  mutate(term = fct_rev(term)) %>%
+  
+  mutate(Taxa = gsub(" ", "\n", Taxa)) %>%
+  
+  mutate(comparison = sub(" exposure", "", comparison)) %>%
+  mutate(comparison = factor(comparison, levels=c("Late", "Mid", "Early"))) %>%
+  
+  mutate(significance = case_when(
+    fdr < 0.001 ~ "***",
+    fdr < 0.01 ~ "**",
+    fdr < 0.05 ~ "*",
+    fdr < 0.1 ~ "+"
+  )) %>%
+  mutate(sig_color = ifelse(abs(estimate) > 0.8, "A", "B")) %>%
+  
+  ggplot(aes(x=visit, y=comparison, fill=estimate)) +
+    geom_tile() +
+    geom_text(aes(label=significance, color=sig_color), size=5) +
+    facet_grid(term ~ Taxa) +
+    scale_fill_gradient2(low="#053061", mid="#F7F7F7", high="#67001F", midpoint=0) +
+    scale_color_manual(values=c("#D3D3D3", "#000000")) +
+    theme_clean() +
+    theme(
+      #axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+      aspect.ratio=1
+    ) +
+    guides(color="none") +
+    labs(
+      y="Antibiotics exposure", fill="Log10\nestimated\nmean\ndifference",
+      x="Age"
+    )
+ggsave("igram_abx_SuppFig1_covariate_gestational_age.pdf", height=4, width=14, useDingbats=F)
+```
+
+## Fig 2B
+
+```{r fig.width=8}
+temp <- s_toTest %>%
+  pcoaplus(bc) 
+  
+temp_centroids <- temp %>%
+  group_by(first_abx_exposure, visit) %>%
+  summarize(Axis.1 = mean(Axis.1), Axis.2 = mean(Axis.2)) %>%
+  ungroup() %>%
+  mutate(is_breastfed = "zAverage")
+
+temp %>%
+  plot(color=first_abx_exposure, shape=is_breastfed, alpha=0.5) +
+    geom_point(data=temp_centroids, aes(x=Axis.1, y=Axis.2, color=first_abx_exposure, shape=is_breastfed), size=1.5, stroke=1.2) +
+    scale_shape_manual(values=c(16,1,8)) + 
+    facet_wrap(~visit) +
+    scale_color_manual(values=ann_colors$first_abx_exposure) +
+    theme_clean_pcoa() +
+    guides(alpha="none") +
+    labs(color="Abx exposure", shape="Breastfed")
+
+ggsave("igram_abx_Fig2B.pdf", height=3, width=8,useDingbats=F)
+```
+
+
+For each visit and abx exposure group, compare it to the no abx group.
+distmat ~ is_breastfed + first_abx_exposure
+
+```{r}
+summaries_df <- s_toTest_expanded %>%
+  group_by(visit, comparison) %>%
+  do(adonisplus(., distmat=bc, formula = distmat ~ is_breastfed + first_abx_exposure, sample_id_var = SampleID, perm=999)) %>%
+  ungroup() %>%
+  filter(!term %in% c("Residuals", "Total")) %>%
+  select(-sumsq) %>%
+  
+  group_by(term) %>%
+  mutate(fdr = p.adjust(p.value, method="BH")) %>%
+  ungroup()
+
+summaries_df %>%
+  pander(split.table=Inf, digits=2)
+```
+
+
+
+For each visit and abx exposure group, compare it to the no abx group.
+distmat ~ is_breastfed * first_abx_exposure
+
+```{r}
+summaries_df <- s_toTest_expanded %>%
+    group_by(visit, comparison) %>%
+    do(adonisplus(., distmat=bc, formula = distmat ~ is_breastfed * first_abx_exposure, sample_id_var = SampleID, perm=999)) %>%
+    ungroup() %>%
+  filter(!term %in% c("Residuals", "Total")) %>%
+  select(-sumsq)
+
+summaries_df %>%
+  pander(split.table=Inf, digits=2)
+```
+
+
+
+# Exposed vs non-exposed at each time point (amox subjects only)
+
+## Supp Fig 1
+
+4M, 12M and 24M samples are included in the analysis. 
+
+```{r}
+s_toTest <- s %>%
+  filter(!is.na(SubjectID)) %>%
+  filter(visit %in% c("4M", "12M", "24M")) %>%
+  
+  filter(SampleID != "I2.345.24M") %>% # there are two s345 24M time points. Manually removing one
+
+  mutate(exposed_abx = dplyr::case_when(visit %in% "4M" ~ abx_4M_any, 
+                                        visit %in% "12M" ~ abx_first_year_any, 
+                                        visit %in% "24M" ~ abx_2Y_any,
+                                        TRUE ~ NA) ) %>%
+  
+  mutate(exposed_abx_amox = dplyr::case_when(visit %in% "4M" ~ abx_4M_any_Amox, 
+                                             visit %in% "12M" ~ abx_first_year_any_Amox, 
+                                             visit %in% "24M" ~ abx_2Y_any_Amox,
+                                             TRUE ~ NA) ) %>%
+  
+  mutate(exposed_abx_nonAmox = dplyr::case_when(visit %in% "4M" ~ abx_4M_any_nonAmox, 
+                                                visit %in% "12M" ~ abx_first_year_any_nonAmox, 
+                                                visit %in% "24M" ~ abx_2Y_any_nonAmox,
+                                                TRUE ~ NA) ) %>%
+  
+  mutate(is_breastfed = feeding_type %in% c("breastmilk", "mixed")) %>%
+  #mutate(is_breastfed = ifelse(is_breastfed, "Breastfed", "No breastfeeding")) %>%
+  
+  mutate(first_abx_exposure = fct_recode(first_abx_exposure, 
+                                         Unexposed = "no abx",
+                                         `Early exposure` = "before 4M",
+                                         `Mid exposure` = "btw 4M and 12M",
+                                         `Late exposure` = "after 12M")) %>%
+  
+  mutate(delivery_type = fct_collapse(delivery_type, `C-section`=c("C-Section with labor", "C-Section without labor"))) %>%
+  
+  droplevels()
+
+
+amox_only_subjects <- s %>%
+  filter(!is.na(SubjectID)) %>%
+  filter(visit %in% c("4M", "12M", "24M")) %>%
+  
+  filter(SampleID != "I2.345.24M") %>% # there are two s345 24M time points. Manually removing one
+  
+  select(SampleID, SubjectID, visit, visit_num, age_at_visit, first_abx_exposure:last_abx_class) %>% 
+  filter(!abx_2Y_any_nonAmox) %>%
+  pull(SubjectID) %>%
+  unique() %>% 
+  as.character()
+  
+  
+s_toTest <- s_toTest %>%
+  filter(SubjectID %in% amox_only_subjects)
+
+
+s_toTest_expanded <- s_toTest %>%
+  select(SampleID, SubjectID, visit, first_abx_exposure, exposed_abx_amox, exposed_abx_nonAmox, is_breastfed, delivery_type, gest_age, intrapartum_antibiotics) %>%
+  mutate(comp_exposure_Early_exposure = first_abx_exposure %in% c("Unexposed", "Early exposure")) %>%
+  mutate(comp_exposure_Mid_exposure = first_abx_exposure %in% c("Unexposed", "Mid exposure")) %>%
+  mutate(comp_exposure_Late_exposure = first_abx_exposure %in% c("Unexposed", "Late exposure")) %>% 
+  pivot_longer(cols=starts_with("comp_"), names_to="comparison", values_to="keep") %>% 
+  filter(keep) %>% select(-keep) %>% 
+  mutate(comparison = sub("comp_exposure_", "", comparison)) %>%
+  mutate(comparison = gsub("_", " ", comparison)) 
+
+pander(table(s_toTest$first_abx_exposure, s_toTest$visit))
+
+
+
+
+s_toTest %>%
+  select(SubjectID, first_abx_exposure) %>%
+  unique() %>%
+  pull(first_abx_exposure) %>%
+  table()
+
+
+ann_colors = list(
+  first_abx_exposure = factor_palette(s_toTest$first_abx_exposure, viridis(length(levels(s_toTest$first_abx_exposure)), option="plasma", end=0.8) )
+)
+
+```
+
+
+
+```{r}
+addmargins(table(s_toTest$visit, s_toTest$is_breastfed, useNA = "ifany")) %>%
+  pander(split.table=Inf)
+```
+
+
+
+```{r}
+props_toTest <- summed_props[,s_toTest$SampleID] %>%
+  as.data.frame() %>% 
+  rownames_to_column("Taxa") %>% 
+  pivot_longer(-Taxa, names_to="SampleID", values_to="props") %>%
+  #right_join(s_toTest, by="SampleID")  %>%
+  group_by(Taxa) %>%
+  mutate(perc_present = sum(props > 0)/n()) %>%
+  mutate(mean_prop = mean(props)) %>%
+  ungroup() %>%
+  filter(mean_prop > 0.015) %>%
+  filter(Taxa != "Bacteria") %>%
+  filter(!grepl("phage", Taxa)) %>%
+  
+  mutate(props_original = props) %>%
+  mutate(props = props + min(filter(., props>0)$props) / 10) %>%
+  mutate(props_log = log10(props))
+
+
+props_toTest_expanded <- props_toTest %>%
+  right_join(s_toTest_expanded, by="SampleID")
+
+props_toTest <- props_toTest %>%
+  right_join(s_toTest, by="SampleID")
+```
+
+
+
+
+For each visit: props_log ~ is_breastfed + first_abx_exposure
+In this comparison we are comparing the "first abx exposure" group to the control group with no antibiotics at each time point. 
+
+```{r}
+summaries_df <- props_toTest_expanded %>%
+  
+  group_by(Taxa, visit, comparison) %>%
+  do(tidy(lm(props_log ~ is_breastfed + first_abx_exposure, data=.))) %>%
+  ungroup() %>%
+  filter(!grepl("Intercept", term)) %>%
+  #mutate(term = sub("study_day", "BL - ", term)) %>%
+  group_by(term, visit, comparison) %>%
+  mutate(fdr = p.adjust(p.value, method="BH")) %>%
+  ungroup() %>%
+  
+  mutate(term = sub("first_abx_exposure", "Unexposed - ", term)) %>%
+  mutate(term = gsub("TRUE", "", term))
+```
+
+
+```{r fig.width=14, fig.height=8}
+taxa_of_interest <- props_toTest %>%
+  select(Taxa, mean_prop) %>%
+  unique() %>%
+  arrange(-mean_prop) %>%
+  separate(Taxa, remove = F, into=c("Phylum", "Species"), extra="merge") %>%
+  group_by(Phylum) %>%
+  slice(1:3) %>%
+  ungroup() %>%
+  filter(!Taxa %in% "Proteobacteria Enterobacteriaceae") %>%
+  mutate(Phylum = ifelse(Phylum %in% c("Proteobacteria", "Verrucomicrobia"), "Proteobacteria and\nVerrucomicrobia", Phylum)) %>%
+  select(Taxa, Phylum)
+
+summaries_df %>% 
+  right_join(taxa_of_interest, by="Taxa") %>%
+  mutate(term = ifelse(grepl("Unexposed", term), "Abx effect", term)) %>%
+  mutate(term = sub("is_breastfed", "Breastfeeding", term)) %>%
+  mutate(term = factor(term)) %>%
+  mutate(term = fct_rev(term)) %>%
+  
+  mutate(Taxa = gsub(" ", "\n", Taxa)) %>%
+  
+  mutate(comparison = sub(" exposure", "", comparison)) %>%
+  mutate(comparison = factor(comparison, levels=c("Late", "Mid", "Early"))) %>%
+  
+  mutate(significance = case_when(
+    fdr < 0.001 ~ "***",
+    fdr < 0.01 ~ "**",
+    fdr < 0.05 ~ "*",
+    fdr < 0.1 ~ "+"
+  )) %>%
+  mutate(sig_color = ifelse(abs(estimate) > 0.8, "A", "B")) %>%
+  
+  ggplot(aes(x=visit, y=comparison, fill=estimate)) +
+    geom_tile() +
+    geom_text(aes(label=significance, color=sig_color), size=5) +
+    facet_grid(term ~ Taxa) +
+    scale_fill_gradient2(low="#053061", mid="#F7F7F7", high="#67001F", midpoint=0) +
+    scale_color_manual(values=c("#D3D3D3", "#000000")) +
+    theme_clean() +
+    theme(
+      #axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+      aspect.ratio=1
+    ) +
+    guides(color="none") +
+    labs(
+      y="Antibiotics exposure", fill="Log10\nestimated\nmean\ndifference",
+      x="Age"
+    )
+ggsave("igram_abx_SuppFig1_amoxOnly.pdf", height=4, width=14, useDingbats=F)
+```
+
