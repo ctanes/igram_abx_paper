@@ -90,6 +90,9 @@ s <- read.delim(mapping_file_fp, sep='\t') %>%
   mutate(isControl = grepl('Extract|Vibrio|EBneg|DNA', SampleID, ignore.case = T)) %>%
   mutate(Keep = input > 1000000) %>%
   
+  select(SampleID, SubjectID, visit, age_at_visit, delivery_type, intrapartum_antibiotics, gest_age, feeding_type, is_breastfed,
+         first_abx_exposure, abx_4M_any, abx_first_year_any, abx_2Y_any, abx_2Y_any_nonAmox, nonhost) %>%
+  
   filter(visit %in% c("4M", "12M", "24M", "SS2_B", "SS2_WK1", "SS2_WK2", "SS2_WK3")) %>%
   mutate(visit = factor(visit, levels=c("4M", "12M", "24M", "SS2_B", "SS2_WK1", "SS2_WK2", "SS2_WK3"))) %>%
   

@@ -85,24 +85,16 @@ s_toTest <- s %>%
   filter(visit %in% c("4M", "12M", "24M")) %>%
   
   filter(SampleID != "I2.345.24M") %>% # there are two s345 24M time points. Manually removing one
-
+  
+  #select(SampleID, SubjectID, visit, age_at_visit, delivery_type, intrapartum_antibiotics, gest_age, feeding_type, is_breastfed,
+  #       first_abx_exposure, abx_4M_any, abx_first_year_any, abx_2Y_any, abx_2Y_any_nonAmox, nonhost) %>%
+  
   mutate(exposed_abx = dplyr::case_when(visit %in% "4M" ~ abx_4M_any, 
                                         visit %in% "12M" ~ abx_first_year_any, 
                                         visit %in% "24M" ~ abx_2Y_any,
                                         TRUE ~ NA) ) %>%
   
-  mutate(exposed_abx_amox = dplyr::case_when(visit %in% "4M" ~ abx_4M_any_Amox, 
-                                             visit %in% "12M" ~ abx_first_year_any_Amox, 
-                                             visit %in% "24M" ~ abx_2Y_any_Amox,
-                                             TRUE ~ NA) ) %>%
-  
-  mutate(exposed_abx_nonAmox = dplyr::case_when(visit %in% "4M" ~ abx_4M_any_nonAmox, 
-                                                visit %in% "12M" ~ abx_first_year_any_nonAmox, 
-                                                visit %in% "24M" ~ abx_2Y_any_nonAmox,
-                                                TRUE ~ NA) ) %>%
-  
   mutate(is_breastfed = feeding_type %in% c("breastmilk", "mixed")) %>%
-  #mutate(is_breastfed = ifelse(is_breastfed, "Breastfed", "No breastfeeding")) %>%
   
   mutate(first_abx_exposure = fct_recode(first_abx_exposure, 
                                          Unexposed = "no abx",
@@ -116,7 +108,7 @@ s_toTest <- s %>%
   
   
 s_toTest_expanded <- s_toTest %>%
-  select(SampleID, SubjectID, visit, first_abx_exposure, exposed_abx_amox, exposed_abx_nonAmox, is_breastfed, delivery_type, gest_age, intrapartum_antibiotics) %>%
+  select(SampleID, SubjectID, visit, first_abx_exposure, is_breastfed, delivery_type, gest_age, intrapartum_antibiotics) %>%
   mutate(comp_exposure_Early_exposure = first_abx_exposure %in% c("Unexposed", "Early exposure")) %>%
   mutate(comp_exposure_Mid_exposure = first_abx_exposure %in% c("Unexposed", "Mid exposure")) %>%
   mutate(comp_exposure_Late_exposure = first_abx_exposure %in% c("Unexposed", "Late exposure")) %>% 
@@ -191,7 +183,6 @@ s_abx_summary %>%
 s_toTest %>%
   mutate(divide = ifelse(first_abx_exposure == "Unexposed", "Control", "Exposed samples")) %>%
   mutate(divide = factor(divide)) %>%
-  #mutate(divide = fct_rev(divide)) %>%
   mutate(relevant = ifelse(first_abx_exposure == "Early exposure" | 
            (first_abx_exposure == "Mid exposure" & visit %in% c("12M", "24M")) |
            (first_abx_exposure == "Late exposure" & visit %in% c("24M")),
@@ -217,18 +208,13 @@ s_toTest %>%
     geom_tile(height=0.95, width=0.95) +
     geom_text(aes(label=num_samples_text), size=4) +
     facet_grid(divide~., space = "free", scale = "free") +
-    #scale_fill_manual(values = c("#FFFFFF", as.character(wes_palette("Royal1", 2, type="discrete")))) +
-    #scale_fill_manual(values = c("#FFFFFF", "#B9BAA3", "#A22c29")) +
     scale_fill_manual(values = c("#FFFFFF", "#B8B2AC", "#FC8268")) +
     theme_clean() +
     scale_y_discrete(expand = c(0,0)) +
     scale_x_discrete(expand = c(0,0)) +
     theme(
-      #panel.border = element_blank(),
-      axis.ticks = element_blank()#,
-      #aspect.ratio = 1
+      axis.ticks = element_blank()
     ) +
-    #coord_equal() +
     guides(fill = "none") +
     labs(
       y="Antibiotics exposure", x="Age"
@@ -688,23 +674,10 @@ s_toTest <- s %>%
   
   filter(SampleID != "I2.345.24M") %>% # there are two s345 24M time points. Manually removing one
 
-  mutate(exposed_abx = dplyr::case_when(visit %in% "4M" ~ abx_4M_any, 
-                                        visit %in% "12M" ~ abx_first_year_any, 
-                                        visit %in% "24M" ~ abx_2Y_any,
-                                        TRUE ~ NA) ) %>%
-  
-  mutate(exposed_abx_amox = dplyr::case_when(visit %in% "4M" ~ abx_4M_any_Amox, 
-                                             visit %in% "12M" ~ abx_first_year_any_Amox, 
-                                             visit %in% "24M" ~ abx_2Y_any_Amox,
-                                             TRUE ~ NA) ) %>%
-  
-  mutate(exposed_abx_nonAmox = dplyr::case_when(visit %in% "4M" ~ abx_4M_any_nonAmox, 
-                                                visit %in% "12M" ~ abx_first_year_any_nonAmox, 
-                                                visit %in% "24M" ~ abx_2Y_any_nonAmox,
-                                                TRUE ~ NA) ) %>%
-  
+  #select(SampleID, SubjectID, visit, age_at_visit, delivery_type, intrapartum_antibiotics, gest_age, feeding_type,
+  #       first_abx_exposure, abx_4M_any, abx_first_year_any, abx_2Y_any, abx_2Y_any_nonAmox, nonhost) %>%
+
   mutate(is_breastfed = feeding_type %in% c("breastmilk", "mixed")) %>%
-  #mutate(is_breastfed = ifelse(is_breastfed, "Breastfed", "No breastfeeding")) %>%
   
   mutate(first_abx_exposure = fct_recode(first_abx_exposure, 
                                          Unexposed = "no abx",
@@ -723,7 +696,6 @@ amox_only_subjects <- s %>%
   
   filter(SampleID != "I2.345.24M") %>% # there are two s345 24M time points. Manually removing one
   
-  select(SampleID, SubjectID, visit, visit_num, age_at_visit, first_abx_exposure:last_abx_class) %>% 
   filter(!abx_2Y_any_nonAmox) %>%
   pull(SubjectID) %>%
   unique() %>% 
@@ -735,7 +707,7 @@ s_toTest <- s_toTest %>%
 
 
 s_toTest_expanded <- s_toTest %>%
-  select(SampleID, SubjectID, visit, first_abx_exposure, exposed_abx_amox, exposed_abx_nonAmox, is_breastfed, delivery_type, gest_age, intrapartum_antibiotics) %>%
+  select(SampleID, SubjectID, visit, first_abx_exposure, is_breastfed) %>%
   mutate(comp_exposure_Early_exposure = first_abx_exposure %in% c("Unexposed", "Early exposure")) %>%
   mutate(comp_exposure_Mid_exposure = first_abx_exposure %in% c("Unexposed", "Mid exposure")) %>%
   mutate(comp_exposure_Late_exposure = first_abx_exposure %in% c("Unexposed", "Late exposure")) %>% 

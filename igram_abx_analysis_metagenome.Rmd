@@ -121,26 +121,18 @@ card <- read_gene_aln_results(file.path(prot_align_dir, "20190830_protein_fasta_
 s_toTest <- s %>%
   filter(!is.na(SubjectID)) %>%
   filter(visit %in% c("4M", "12M", "24M")) %>%
-
+  
   filter(SampleID != "I2.345.24M") %>% # there are two s345 24M time points. Manually removing one
+  
+  #select(SampleID, SubjectID, visit, age_at_visit, delivery_type, intrapartum_antibiotics, gest_age, feeding_type,
+  #       first_abx_exposure, abx_4M_any, abx_first_year_any, abx_2Y_any, abx_2Y_any_nonAmox, nonhost) %>%
   
   mutate(exposed_abx = dplyr::case_when(visit %in% "4M" ~ abx_4M_any, 
                                         visit %in% "12M" ~ abx_first_year_any, 
                                         visit %in% "24M" ~ abx_2Y_any,
                                         TRUE ~ NA) ) %>%
   
-  mutate(exposed_abx_amox = dplyr::case_when(visit %in% "4M" ~ abx_4M_any_Amox, 
-                                             visit %in% "12M" ~ abx_first_year_any_Amox, 
-                                             visit %in% "24M" ~ abx_2Y_any_Amox,
-                                             TRUE ~ NA) ) %>%
-  
-  mutate(exposed_abx_nonAmox = dplyr::case_when(visit %in% "4M" ~ abx_4M_any_nonAmox, 
-                                                visit %in% "12M" ~ abx_first_year_any_nonAmox, 
-                                                visit %in% "24M" ~ abx_2Y_any_nonAmox,
-                                                TRUE ~ NA) ) %>%
-  
   mutate(is_breastfed = feeding_type %in% c("breastmilk", "mixed")) %>%
-  #mutate(is_breastfed = ifelse(is_breastfed, "Breastfed", "No breastfeeding")) %>%
   
   mutate(first_abx_exposure = fct_recode(first_abx_exposure, 
                                          Unexposed = "no abx",
@@ -148,11 +140,13 @@ s_toTest <- s %>%
                                          `Mid exposure` = "btw 4M and 12M",
                                          `Late exposure` = "after 12M")) %>%
   
+  mutate(delivery_type = fct_collapse(delivery_type, `C-section`=c("C-Section with labor", "C-Section without labor"))) %>%
+  
   droplevels()
-
-
+  
+  
 s_toTest_expanded <- s_toTest %>%
-  select(SampleID, SubjectID, visit, first_abx_exposure, exposed_abx_amox, exposed_abx_nonAmox, is_breastfed) %>%
+  select(SampleID, SubjectID, visit, first_abx_exposure, is_breastfed, delivery_type, gest_age, intrapartum_antibiotics) %>%
   mutate(comp_exposure_Early_exposure = first_abx_exposure %in% c("Unexposed", "Early exposure")) %>%
   mutate(comp_exposure_Mid_exposure = first_abx_exposure %in% c("Unexposed", "Mid exposure")) %>%
   mutate(comp_exposure_Late_exposure = first_abx_exposure %in% c("Unexposed", "Late exposure")) %>% 
@@ -163,6 +157,11 @@ s_toTest_expanded <- s_toTest %>%
 
 pander(table(s_toTest$first_abx_exposure, s_toTest$visit))
 
+s_toTest %>%
+  select(SubjectID, first_abx_exposure) %>%
+  unique() %>%
+  pull(first_abx_exposure) %>%
+  table()
 
 ann_colors = list(
   first_abx_exposure = factor_palette(s_toTest$first_abx_exposure, viridis(length(levels(s_toTest$first_abx_exposure)), option="plasma", end=0.8) )
@@ -209,9 +208,6 @@ summaries_df <- s_toTest_expanded %>%
   ungroup() %>%
   filter(!term %in% c("Residuals", "Total")) %>%
   select(-one_of(c("sumsq", "meansq")))
-
-summaries_df %>%
-  pander(split.table=Inf, digits=2)
 ```
 
 distmat ~ is_breastfed * first_abx_exposure
@@ -223,9 +219,6 @@ summaries_df <- s_toTest_expanded %>%
   ungroup() %>%
   filter(!term %in% c("Residuals", "Total")) %>%
   select(-one_of(c("sumsq", "meansq")))
-
-summaries_df %>%
-  pander(split.table=Inf, digits=2)
 ```
 
 
@@ -369,7 +362,6 @@ summaries_df %>%
 ```{r fig.width=12, fig.height=12}
 card_amox_toTest %>%
   filter(first_abx_exposure == "Unexposed") %>%
-  #filter(group %in% (summaries_df %>% filter(fdr<0.1) %>% pull(group) %>% unique() %>% as.character())) %>%
   mutate(group = gsub(";", "\n", group)) %>%
   ggplot(aes(x=visit, y=props, color=category)) +
     geom_boxplot(outlier.alpha = 0) +
@@ -438,10 +430,6 @@ summaries_df <- card_amox_toTest_expanded %>%
   
   mutate(term = sub("first_abx_exposure", "Unexposed - ", term)) %>%
   mutate(term = gsub("TRUE", "", term))
-
-summaries_df %>%
-  filter(p.value<0.05) %>%
-  pander(split.table=Inf, digits=2)
 ```
 
 

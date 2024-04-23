@@ -29,7 +29,7 @@ knitr::opts_chunk$set(
 
 This analysis contains the IGRAM Abx substudy 2 samples. This study follows the gut microbiome of patients after they take antibiotics. The baseline stool is collected within two days of taking antibiotics. The consecutive visits are 4-11 days after the previous visit. The last time point must also be within 10 days of taking the last dose of antibiotics.
 
-# Taxnomic analysis
+# Taxonomic analysis
 
 
 ## Overview of the subjects
@@ -46,21 +46,10 @@ s_abx_summary_SS2 <- s_abx_summary %>%
 
 
 s_toTest <- s %>%
-  filter(!isControl) %>%
-  filter(Keep) %>%
   filter(grepl("SS2", visit)) %>%
   filter(!grepl("s155", SubjectID)) %>% # this was a muscle injection of amox so it's removed
-  
+
   mutate(study_day = fct_recode(visit, V1="SS2_B", V2="SS2_WK1", V3="SS2_WK2", V4="SS2_WK3")) %>%
-  mutate(study_day_consec = study_day) %>%
-  
-  mutate(had_amox = grepl("Amoxicillin|Amoxicillin-Clavulanate", current_abx)) %>%
-  mutate(had_other = grepl(s_abx_summary_SS2 %>% filter(!grepl("Amoxicillin|Amoxicillin-Clavulanate", abx_name)) %>% pull(abx_name) %>% unique() %>% paste(collapse="|"), current_abx)) %>%
-  
-  mutate(on_abx = ifelse(on_abx, "On abx", "Off abx")) %>%
-  mutate(had_other = ifelse(had_other, "Other abx", "No other abx")) %>%
-  mutate(had_amox = ifelse(had_amox, "Amox", "No amox")) %>%
-  mutate(had_amox = fct_rev(factor(had_amox))) %>%
   
   mutate(is_breastfed = ifelse(is_breastfed, "BF", "no BF")) %>%
   mutate(is_breastfed = fct_rev(factor(is_breastfed))) %>%
