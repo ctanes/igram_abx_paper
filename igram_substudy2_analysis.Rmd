@@ -72,7 +72,8 @@ abx_starts <- s_abx_summary_SS2 %>%
 
 s_toTest <- s_toTest %>%  
   left_join(baseline_ages, by="SubjectID") %>%
-  left_join(abx_starts, by="SubjectID")
+  left_join(abx_starts, by="SubjectID") %>%
+  mutate(days_since_abx = age_at_visit-abx_starts)
 
 
 ann_colors = list(
@@ -102,6 +103,12 @@ temp <- s_toTest%>%
   pull(age_at_visit)
 mean(temp) 
 sd(temp)
+
+s_toTest%>%
+  filter(study_day == "V1") %>%
+  mutate(days_since_abx = days_since_abx * 30) %>%
+  pull(days_since_abx) %>%
+  mean() 
 
 s %>%
   filter(SubjectID %in% unique(s_toTest$SubjectID)) %>% 
@@ -230,6 +237,10 @@ summaries_df <- props_toTest %>%
   mutate(term = sub("is_breastfedBF", "Breastfeeding", term)) %>%
   mutate(term = sub("baseline_age", "Baseline age", term)) %>%
   mutate(term = sub("study_day", "V1 - ", term))
+
+summaries_df %>%
+  arrange(fdr) %>%
+  pander(split.table=Inf, digits=2)
 ```
 
 
@@ -295,7 +306,7 @@ props_toTest %>%
 ggsave("igram_abx_Fig3B_SS2_ageEffect.pdf", height=4, width=7, useDingbats=F)
 ```
 
-## Supp Fig 2
+## Supp Fig 4
 
 ```{r fig.height=6, fig.width=8}
 summaries_df %>%
@@ -305,7 +316,7 @@ summaries_df %>%
   mutate(toSep = ifelse(grepl("V1", term), "Time point effect", "Covariates")) %>%
   #mutate(toSep = fct_rev(factor(toSep))) %>%
 
-  mutate(isSig = ifelse(fdr < 0.05, "q<0.05", "q>0.05")) %>%
+  mutate(isSig = ifelse(fdr < 0.1, "q<0.1", "q>0.1")) %>%
   
   ggplot(aes(x=Value, y=Taxa, color=term, shape=isSig)) +
     geom_vline(xintercept=0, linetype=2) +
@@ -321,11 +332,212 @@ summaries_df %>%
       y="", color="", shape=""
     )
 
-ggsave("igram_abx_SuppFig2_SS2_diffAb_all.pdf", height=6, width=9, useDingbats=F)
+ggsave("igram_abx_SuppFig4A_SS2_diffAb_all.pdf", height=6, width=9, useDingbats=F)
 ```
 
 
-## Beta diversity
+
+
+props_log ~ is_breastfed + baseline_age + days_since_abx, random=~1|SubjectID
+
+
+```{r}
+summaries_df <- props_toTest %>%
+  filter(days_since_abx < 1) %>%
+  group_by(Taxa) %>%
+  do(tidy_lmer(nlme::lme(props_log ~ is_breastfed + baseline_age + days_since_abx, random=~1|SubjectID, data=., na.action=na.omit))) %>%
+  ungroup() %>%
+  filter(!grepl("Intercept", term)) %>%
+  group_by(term) %>%
+  mutate(fdr = p.adjust(p.value, method="BH")) %>%
+  ungroup() %>%
+  
+  mutate(term = sub("is_breastfedBF", "Breastfeeding", term)) %>%
+  mutate(term = sub("baseline_age", "Baseline age", term))
+```
+
+
+```{r fig.height=6, fig.width=8}
+summaries_df %>%
+  mutate(term = sub("baseline_age", "Baseline age", term)) %>%
+  mutate(term = sub("days_since_abx", "Days since abx", term)) %>%
+  mutate(term = fct_rev(factor(term))) %>%
+  
+  #mutate(toSep = ifelse(grepl("V1", term), "Time point effect", "Covariates")) %>%
+  #mutate(toSep = fct_rev(factor(toSep))) %>%
+  mutate(Taxa = fct_reorder(Taxa, Value, .fun = `[`, 3)) %>%
+  
+  mutate(isSig = ifelse(fdr < 0.1, "q<0.1", "q>0.1")) %>%
+  
+  ggplot(aes(x=Value, y=Taxa, color=term, shape=isSig)) +
+    geom_vline(xintercept=0, linetype=2) +
+    geom_pointrange(aes(xmin=Value-Std.Error, xmax=Value+Std.Error), position = position_dodge(width = 0.4)) +
+    #geom_text(aes(x=7, label=p_label), vjust=0.76, hjust=1, color="black") +
+    #facet_wrap(~toSep) +
+    scale_color_manual(values=c("#0F5257", as.character(wes_palette("GrandBudapest1"))[2], as.character(wes_palette("Royal1"))[1])) +
+    scale_shape_manual(values=c(16,1)) +
+    theme_clean() +
+    guides(colour = guide_legend(reverse=T)) +
+    labs(
+      x="Estimated log difference between groups",
+      y="", color="", shape=""
+    )
+
+ggsave("igram_abx_SuppFig4B_SS2_diffAb_all.pdf", height=6, width=9, useDingbats=F)
+```
+
+```{r fig.height=6, fig.width=6}
+props_toTest %>%
+  filter(days_since_abx < 1) %>%
+  filter(Taxa %in% (summaries_df %>% filter(term == "days_since_abx") %>% filter(fdr<0.1) %>% pull(Taxa))) %>%
+  droplevels() %>%
+  mutate(Taxa = fct_relabel(Taxa, function(x) gsub("Actinobacteria |Firmicutes |Bacteroidetes |Verrucomicrobia ", "", x))) %>%
+  mutate(Taxa = sub(" ", "\n", Taxa)) %>%
+  ggplot(aes(x=days_since_abx, y=props)) +
+    geom_point(aes(color=study_day, shape=is_breastfed)) +
+    geom_smooth(method="lm", color="black") +
+    facet_wrap(~Taxa, ncol = 5) +
+    scale_color_manual(values=ann_colors$study_day) +
+    #scale_color_viridis(end=0.9) +
+    scale_shape_manual(values=c(16,1)) +
+    scale_y_continuous(labels=scales:::percent, trans="log10", limits = c(0.000001, 2), breaks = c(0.00001, 0.001, 0.01, 0.1, 1)) +
+    theme_clean() +
+    theme(
+      legend.position = "bottom",
+      aspect.ratio = 1.2
+    ) +
+    #guides(color=F) +
+    labs(
+      x="Baseline age (months)", shape="Breastfeeding",
+      y="Relative abundance"
+    )
+
+#ggsave("igram_abx_Fig3B_SS2_ageEffect.pdf", height=4, width=7, useDingbats=F)
+```
+
+
+
+Match each SS2 subject with an unexposed subject that is age and breastfeeding matched.
+
+```{r}
+pick_count <- baseline_ages %>%
+  left_join(s_toTest %>% 
+              arrange(study_day) %>% 
+              group_by(SubjectID) %>% 
+              slice(1) %>% 
+              ungroup() %>% 
+              select(SubjectID, is_breastfed, age_at_visit), 
+            by="SubjectID") %>% 
+  mutate(visit = case_when(
+    age_at_visit > 16 ~ "24M",
+    age_at_visit > 8 ~ "12M",
+    age_at_visit > 0 ~ "4M"
+  )) %>%
+  group_by(visit, is_breastfed) %>%
+  count() %>%
+  ungroup()
+  
+set.seed(102030)
+subjects_matched <- s %>%
+  filter(first_abx_exposure %in% "no abx") %>% 
+  filter(visit %in% c("4M", "12M", "24M")) %>% 
+  select(SampleID, SubjectID, visit, is_breastfed, age_at_visit_main=age_at_visit) %>%
+  mutate(is_breastfed = ifelse(is_breastfed, "BF", "no BF")) %>%
+  
+  slice(sample(1:n())) %>%
+  group_by(is_breastfed, visit) %>%
+  mutate(index = row_number()) %>%
+  ungroup() %>%
+  
+  left_join(pick_count, by=c("visit", "is_breastfed")) %>%
+  filter(index <= n)
+
+sum(duplicated(subjects_matched$SubjectID))
+  
+```
+
+
+```{r}
+s_temp <- s_toTest %>%
+  select(SampleID, SubjectID, study_day, is_breastfed, age_at_visit) %>%
+  bind_rows(s %>% 
+              mutate(is_breastfed = ifelse(is_breastfed, "BF", "no BF")) %>%
+              filter(SampleID %in% subjects_matched$SampleID) %>% 
+              select(SampleID, SubjectID, is_breastfed, age_at_visit) %>%
+              mutate(study_day = "Control")) %>%
+  mutate(study_day = factor(study_day)) %>%
+  mutate(is_breastfed = fct_rev(factor(is_breastfed)))
+```
+
+```{r}
+props_toTest_match <- summed_props %>%
+  as.data.frame() %>% 
+  rownames_to_column("Taxa") %>% 
+  pivot_longer(-Taxa, names_to="SampleID", values_to="props") %>%
+  right_join(s_temp, by="SampleID")  %>%
+  group_by(Taxa) %>%
+  mutate(perc_present = mean(props > 0)) %>%
+  mutate(mean_prop = mean(props)) %>%
+  ungroup() %>%
+  filter(mean_prop > 0.01) %>%
+  filter(Taxa != "Bacteria") %>%
+  filter(!grepl("phage", Taxa)) %>%
+  
+  mutate(props_original = props) %>%
+  mutate(props = props + min(filter(., props>0)$props) / 10) %>%
+  mutate(props_log = log10(props))
+  
+```
+
+
+props_log ~ is_breastfed + baseline_age + study_day, random=~1|SubjectID
+
+
+```{r}
+summaries_df <- props_toTest_match %>%
+  
+  group_by(Taxa) %>%
+  do(tidy_lmer(nlme::lme(props_log ~ is_breastfed + age_at_visit + study_day, random=~1|SubjectID, data=., na.action=na.omit))) %>%
+  ungroup() %>%
+  filter(!grepl("Intercept", term)) %>%
+  group_by(term) %>%
+  mutate(fdr = p.adjust(p.value, method="BH")) %>%
+  ungroup() %>%
+  
+  mutate(term = sub("is_breastfedBF", "Breastfeeding", term)) %>%
+  mutate(term = sub("baseline_age", "Baseline age", term)) %>%
+  mutate(term = sub("study_day", "Control - ", term))
+```
+
+
+```{r fig.height=6, fig.width=8}
+summaries_df %>%
+  mutate(term = sub("age_at_visit", "Age", term)) %>%
+  mutate(term = fct_rev(factor(term))) %>%
+  
+  mutate(toSep = ifelse(grepl("Control", term), "Time point effect", "Covariates")) %>%
+  #mutate(toSep = fct_rev(factor(toSep))) %>%
+
+  mutate(isSig = ifelse(fdr < 0.1, "q<0.1", "q>0.1")) %>%
+  
+  ggplot(aes(x=Value, y=Taxa, color=term, shape=isSig)) +
+    geom_vline(xintercept=0, linetype=2) +
+    geom_pointrange(aes(xmin=Value-Std.Error, xmax=Value+Std.Error), position = position_dodge(width = 0.4)) +
+    #geom_text(aes(x=7, label=p_label), vjust=0.76, hjust=1, color="black") +
+    facet_wrap(~toSep) +
+    scale_color_manual(values=c(rev(as.character(ann_colors$study_day)), as.character(wes_palette("GrandBudapest1"))[2], as.character(wes_palette("Royal1"))[1])) +
+    scale_shape_manual(values=c(16,1)) +
+    theme_clean() +
+    guides(colour = guide_legend(reverse=T)) +
+    labs(
+      x="Estimated log difference between groups",
+      y="", color="", shape=""
+    )
+
+ggsave("igram_abx_SuppFig4C_SS2_diffAb_all.pdf", height=6, width=9, useDingbats=F)
+```
+
+# Beta diversity
 
 
 
@@ -334,16 +546,16 @@ Individual tests on each variable
 
 ```{r}
 summaries_df <- rbind(
-  adonisplus(s_toTest, distmat = bc, formula = distmat ~ is_breastfed, 
+  adonisplus(s_toTest, distmat = bc_rarefied, formula = distmat ~ is_breastfed, 
              sample_id_var = SampleID, rep_meas_var = SubjectID, 
              shuffle = c(is_breastfed = "between"), permutations=999),
-  adonisplus(s_toTest, distmat = bc, formula = distmat ~ baseline_age, 
+  adonisplus(s_toTest, distmat = bc_rarefied, formula = distmat ~ baseline_age, 
              sample_id_var = SampleID, rep_meas_var = SubjectID, 
              shuffle = c(baseline_age = "between"), permutations=999),
-  adonisplus(s_toTest, distmat = bc, formula = distmat ~ study_day, 
+  adonisplus(s_toTest, distmat = bc_rarefied, formula = distmat ~ study_day, 
              sample_id_var = SampleID, rep_meas_var = SubjectID, 
              shuffle = c(study_day = "within"), permutations=999),
-  adonisplus(s_toTest, distmat = bc, formula = distmat ~ SubjectID, 
+  adonisplus(s_toTest, distmat = bc_rarefied, formula = distmat ~ SubjectID, 
              sample_id_var = SampleID, permutations=999)
   ) %>%
   filter(!term %in% c("Residual", "Total")) %>%
@@ -363,21 +575,23 @@ adonispost(s_toTest, distmat = bc, formula = distmat ~ study_day,
              shuffle = c(study_day = "within"), permutations=999)
 
 ```{r}
-adonispost(s_toTest, distmat = bc, formula = distmat ~ study_day, 
+adonispost(s_toTest, distmat = bc_rarefied, formula = distmat ~ study_day, 
              sample_id_var = SampleID, rep_meas_var = SubjectID,  which = study_day, alpha=1,
              shuffle = c(study_day = "within"), permutations=999) %>%
+  filter(!grepl("All", comparison)) %>%
+  mutate(fdr = p.adjust(p.value, method="BH")) %>%
   pander(split.table=Inf, digits=2)
 ```
 
 
 ```{r}
-adonisplus(s_toTest, distmat = bc, formula = distmat ~ SubjectID + study_day, 
+adonisplus(s_toTest, distmat = bc_rarefied, formula = distmat ~ SubjectID + study_day, 
              sample_id_var = SampleID, rep_meas_var = SubjectID, 
              shuffle = c(study_day = "within"), permutations=999) %>%
   pander(split.table=Inf, digits=2)
 
 
-adonisplus(s_toTest, distmat = bc, formula = distmat ~ SubjectID + study_day, 
+adonisplus(s_toTest, distmat = bc_rarefied, formula = distmat ~ SubjectID + study_day, 
              sample_id_var = SampleID, permutations=999) %>%
   pander(split.table=Inf, digits=2)
 
@@ -392,7 +606,7 @@ adonisplus(s_toTest, distmat = bc, formula = distmat ~ is_breastfed + baseline_a
              shuffle = c(study_day = "within", baseline_age = "between", is_breastfed = "between"), permutations=999)
              
 ```{r}
-adonisplus(s_toTest, distmat = bc, formula = distmat ~ is_breastfed + baseline_age + study_day, 
+adonisplus(s_toTest, distmat = bc_rarefied, formula = distmat ~ is_breastfed + baseline_age + study_day, 
            sample_id_var = SampleID, rep_meas_var = SubjectID, 
            shuffle = c(study_day = "within", baseline_age = "between", is_breastfed = "between"), permutations=999) %>%
   pander(split.table=Inf, digits=2)
@@ -405,7 +619,7 @@ adonisplus(s_toTest, distmat = bc, formula = distmat ~ is_breastfed + baseline_a
 
 ```{r}
 percentages <- s_toTest %>%
-  pcoaplus(bc) %>%
+  pcoaplus(bc_rarefied) %>%
   attr("axislabel") %>% 
   as.character() 
 
@@ -413,7 +627,7 @@ R2_label <- paste0("italic(R^2) == ", summaries_df %>% filter(term == "SubjectID
 p_label <- paste0("italic(P) == ", summaries_df %>% filter(term == "SubjectID") %>% pull(p.value) %>% signif(2))
 
 s_toTest %>%
-  pcoaplus(bc) %>%
+  pcoaplus(bc_rarefied) %>%
   ggplot(aes(x=Axis.1, y=Axis.2, group=SubjectID, fill=SubjectID)) +
     geom_point() +
     annotate("text", x=-0.35, y=0.5, label=R2_label, parse=T) +
@@ -438,7 +652,7 @@ R2_label <- paste0("italic(R^2) == ", summaries_df %>% filter(term == "is_breast
 p_label <-  paste0("italic(P) == ", summaries_df %>% filter(term == "is_breastfed") %>% pull(p.value) %>% signif(2))
 
 s_toTest %>%
-  pcoaplus(bc) %>%
+  pcoaplus(bc_rarefied) %>%
   plot(shape=is_breastfed) +
     annotate("text", x=-0.35, y=0.5, label=R2_label, parse=T) +
     annotate("text", x=-0.35, y=0.4, label=p_label, parse=T) +
@@ -455,7 +669,7 @@ R2_label <- paste0("italic(R^2) == ", summaries_df %>% filter(term == "baseline_
 p_label <-  paste0("italic(P) == ", summaries_df %>% filter(term == "baseline_age") %>% pull(p.value) %>% signif(2))
 
 s_toTest %>%
-  pcoaplus(bc) %>%
+  pcoaplus(bc_rarefied) %>%
   plot(color=baseline_age) +
     annotate("text", x=-0.35, y=0.5, label=R2_label, parse=T) +
     annotate("text", x=-0.35, y=0.4, label=p_label, parse=T) +
@@ -474,7 +688,7 @@ p_label <-  paste0("italic(P) == ", summaries_df %>% filter(term == "study_day")
 
 temp <- s_toTest %>%
   mutate(forShape = "A") %>%
-  pcoaplus(bc) 
+  pcoaplus(bc_rarefied) 
 
 temp_centroids <- temp %>%
   group_by(study_day) %>%
@@ -639,7 +853,7 @@ ggsave("igram_abx_Fig4E.pdf", height=2.2, width=9, useDingbats=F)
 ```
 
 
-## SuppFig5
+## Supp Fig 7
 
 ```{r  fig.width=8}
 card_amox_toTest %>%
@@ -663,7 +877,7 @@ card_amox_toTest %>%
       x="Visit", color="Baseline\nage", shape="Breastfeeding",
       y="Relative abundance"
     )
-ggsave("igram_abx_SuppFig5_card_penam_SS2.pdf", height=20, width=20, useDingbats=F)
+ggsave("igram_abx_SuppFig7_card_penam_SS2.pdf", height=20, width=20, useDingbats=F)
 ```
 
 

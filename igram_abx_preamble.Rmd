@@ -90,7 +90,7 @@ s <- read.delim(mapping_file_fp, sep='\t') %>%
   mutate(isControl = grepl('Extract|Vibrio|EBneg|DNA', SampleID, ignore.case = T)) %>%
   mutate(Keep = input > 1000000) %>%
   
-  select(SampleID, SubjectID, visit, age_at_visit, delivery_type, intrapartum_antibiotics, gest_age, feeding_type, is_breastfed,
+  select(SampleID, SubjectID, visit, age_at_visit, delivery_type, intrapartum_antibiotics, gest_age, feeding_type, is_breastfed, run,
          first_abx_exposure, abx_4M_any, abx_first_year_any, abx_2Y_any, abx_2Y_any_nonAmox, nonhost) %>%
   
   filter(visit %in% c("4M", "12M", "24M", "SS2_B", "SS2_WK1", "SS2_WK2", "SS2_WK3")) %>%
@@ -135,6 +135,25 @@ s <- merge(s, data.frame(otu_counts= colSums(summed_cts)), by.x="SampleID", by.y
 ```
 
 
-```{r}
+```{r alpha}
+s <- s %>%
+  left_join(enframe(rarefy(t(cts), 1000), "SampleID", "Richness"), by="SampleID") %>%
+  left_join(enframe(diversity(t(cts)), "SampleID", "Shannon"), by="SampleID")
+```
+
+```{r eval=F}
 bc <- read_qiime_distmat(file.path(data_dir, "bc_igram_abx.txt"))
 ```
+
+
+```{r eval=F}
+counts_rarefied <- rrarefy(t(summed_cts), 50000)
+bc_rarefied <- vegdist(counts_rarefied)
+write.table(as.matrix(bc_rarefied), file=file.path(data_dir,  "bc_igram_abx_rarefied.txt"), sep='\t', quote=F, col.names=NA)
+```
+
+```{r}
+bc_rarefied <- read_qiime_distmat(file.path(data_dir, "bc_igram_abx_rarefied.txt"))
+```
+
+
